@@ -101,6 +101,24 @@ export default function DashboardPage() {
             </div>
             <div style={{ flex: "0 0 auto", display: "flex", gap: 10 }}>
               <a
+                href="/guide.html"
+                target="_blank"
+                rel="noopener"
+                style={{
+                  padding: "10px 18px",
+                  borderRadius: 10,
+                  background: "rgba(255,255,255,0.06)",
+                  border: `1px solid rgba(255,255,255,0.12)`,
+                  color: COLORS.textMain,
+                  fontWeight: 700,
+                  fontSize: 14,
+                  textDecoration: "none",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                📖 คู่มือลูกค้า
+              </a>
+              <a
                 href="/customers"
                 style={{
                   padding: "10px 18px",
