@@ -1,0 +1,23 @@
+# dependencies
+node_modules/
+
+# next.js
+.next/
+out/
+build/
+
+# env (real secrets — only .env.example is committed)
+.env
+.env.local
+.env*.local
+
+# build artifacts
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+dist/
+coverage/
+
+# os / editor
+.DS_Store
+Thumbs.db
+*.log
