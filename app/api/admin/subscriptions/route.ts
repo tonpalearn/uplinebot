@@ -26,8 +26,14 @@ export const dynamic = "force-dynamic";
 interface SubscriptionRequestBody {
   tenant_id: string;
   module_key: string;
-  billing_mode: "included_in_tier" | "addon";
+  // Optional: if omitted, derived from the tenant's plan_tier vs the module's tier_min.
+  billing_mode?: "included_in_tier" | "addon";
+  // Optional: toggle a module on/off for the tenant (Manage Customers page). Defaults true.
+  enabled?: boolean;
 }
+
+type PlanTier = "starter" | "pro" | "business";
+const TIER_RANK: Record<PlanTier, number> = { starter: 0, pro: 1, business: 2 };
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
@@ -46,10 +52,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: false, reason: "invalid_json" }, { status: 400 });
   }
 
-  const { tenant_id, module_key, billing_mode } = body;
-  if (!tenant_id || !module_key || !billing_mode) {
+  const { tenant_id, module_key } = body;
+  const enabled = body.enabled ?? true;
+  if (!tenant_id || !module_key) {
     return NextResponse.json(
-      { ok: false, reason: "tenant_id, module_key and billing_mode are required" },
+      { ok: false, reason: "tenant_id and module_key are required" },
       { status: 400 }
     );
   }
@@ -58,7 +65,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const { data: moduleRow, error: moduleError } = await supabase
     .from("upl_module_catalog")
-    .select("module_key, requires_api_key, addon_price_thb")
+    .select("module_key, requires_api_key, addon_price_thb, tier_min")
     .eq("module_key", module_key)
     .maybeSingle();
 
@@ -69,13 +76,27 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: false, reason: "unknown_module" }, { status: 404 });
   }
 
+  // Derive billing_mode when the caller didn't specify it (e.g. the Manage page toggle):
+  // included_in_tier if the module's minimum tier is at or below the tenant's plan, else addon.
+  let billing_mode = body.billing_mode;
+  if (!billing_mode) {
+    const { data: tenantRow } = await supabase
+      .from("upl_tenants")
+      .select("plan_tier")
+      .eq("id", tenant_id)
+      .maybeSingle();
+    const plan = (tenantRow?.plan_tier as PlanTier) ?? "starter";
+    billing_mode =
+      TIER_RANK[moduleRow.tier_min as PlanTier] <= TIER_RANK[plan] ? "included_in_tier" : "addon";
+  }
+
   const { data: subscription, error: upsertError } = await supabase
     .from("upl_module_subscriptions")
     .upsert(
       {
         tenant_id,
         module_key,
-        enabled: true,
+        enabled,
         billing_mode,
       },
       { onConflict: "tenant_id,module_key" }

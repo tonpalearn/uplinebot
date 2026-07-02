@@ -99,22 +99,39 @@ export default function DashboardPage() {
                 Module Catalog — เปิด/ปิดและซื้อโมดูลเพิ่มแบบ à la carte
               </p>
             </div>
-            <a
-              href="/onboarding"
-              style={{
-                flex: "0 0 auto",
-                padding: "10px 18px",
-                borderRadius: 10,
-                background: COLORS.blue,
-                color: "#0a0e17",
-                fontWeight: 700,
-                fontSize: 14,
-                textDecoration: "none",
-                whiteSpace: "nowrap",
-              }}
-            >
-              + เพิ่มลูกค้าใหม่
-            </a>
+            <div style={{ flex: "0 0 auto", display: "flex", gap: 10 }}>
+              <a
+                href="/customers"
+                style={{
+                  padding: "10px 18px",
+                  borderRadius: 10,
+                  background: "rgba(255,255,255,0.06)",
+                  border: `1px solid rgba(255,255,255,0.12)`,
+                  color: COLORS.textMain,
+                  fontWeight: 700,
+                  fontSize: 14,
+                  textDecoration: "none",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                จัดการลูกค้า
+              </a>
+              <a
+                href="/onboarding"
+                style={{
+                  padding: "10px 18px",
+                  borderRadius: 10,
+                  background: COLORS.blue,
+                  color: "#0a0e17",
+                  fontWeight: 700,
+                  fontSize: 14,
+                  textDecoration: "none",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                + เพิ่มลูกค้าใหม่
+              </a>
+            </div>
           </div>
           <p style={{ color: "#665a33", background: "rgba(242,193,78,0.08)", display: "inline-block", marginTop: 10, padding: "4px 10px", borderRadius: 8, fontSize: 12 }}>
             TODO: ใช้ hardcoded tenant_id ชั่วคราว — รอผูก Supabase Auth session จริง
