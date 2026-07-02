@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { getServiceClient } from "@/lib/db";
 
+// Runs per-request (reads DB via service client at runtime) — never prerender at build.
+export const dynamic = "force-dynamic";
+
 /**
  * GET /api/admin/module-catalog
  * Returns all rows from upl_module_catalog (global, not tenant-scoped).
