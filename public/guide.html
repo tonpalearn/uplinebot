@@ -260,34 +260,35 @@
         <div class="ficon">📋</div>
         <div class="ftitle">
           <h3>ผู้ช่วยจัดการงาน (Todo)</h3>
-          <p>สั่งงานให้บอทจำผ่านแชทได้เลย เพิ่ม/ดู/ปิดงาน ในที่เดียว เหมาะกับทีมเล็กที่คุยกันในไลน์</p>
+          <p>สั่งงานให้บอทจำผ่านแชท — เพิ่ม/ดู/ปิดงาน แสดงเป็นการ์ดสวยมีเลขกำกับ กำหนดวันเวลาได้ เตือนตามเวลา และมีหน้าปฏิทินให้วางแผนเอง · แต่ละกลุ่มแยกรายการงานกันอัตโนมัติ</p>
         </div>
         <div class="badges"><span class="badge live">🟢 พร้อมใช้</span><span class="badge start">Starter</span></div>
       </div>
       <div class="how">
         <h4>คำสั่งที่ใช้ได้</h4>
         <ol class="steps">
-          <li>พิมพ์ <code>เพิ่ม โทรหาลูกค้า</code> — เพิ่มหลายงานพร้อมกันได้ (ขึ้นบรรทัดใหม่ = อีกงาน)</li>
-          <li>พิมพ์ <code>งานวันนี้</code> — ดูรายการงานที่ยังไม่เสร็จ</li>
-          <li>พิมพ์ <code>เสร็จ 2</code> — ปิดงานข้อ 2 · <code>ลบ 1</code> — ลบงานข้อ 1 · <code>ลบทั้งหมด</code></li>
+          <li><code>เพิ่ม โทรหาลูกค้า</code> — เพิ่มหลายงานพร้อมกันได้ (ขึ้นบรรทัดใหม่ = อีกงาน)</li>
+          <li>ใส่วันเวลาได้เลย เช่น <code>เพิ่ม ประชุมทีม พรุ่งนี้ 14:00</code> หรือ <code>เพิ่ม ส่งงาน 25/12</code> — ถ้าไม่ใส่ก็เป็นงานธรรมดา</li>
+          <li><code>งานวันนี้</code> — ดูรายการ (การ์ดมีเลขกำกับ) · <code>เสร็จ 2</code> · <code>ลบ 1</code> · <code>ลบทั้งหมด</code> · <code>ล้างที่เสร็จ</code></li>
+          <li><code>เลื่อน 3 ศุกร์ 09:00</code> — เปลี่ยนกำหนดงาน · <code>วางแผน</code> — รับลิงก์หน้าปฏิทินไปจัดงานเอง</li>
         </ol>
       </div>
       <div class="chatwrap">
         <div class="chat">
-          <div class="day">วันนี้</div>
-          <div class="msg me"><div class="bub cmd">เพิ่ม โทรหาพี่แจ๊ค
-ส่งใบเสนอราคา
-เตรียมของส่งพรุ่งนี้</div></div>
-          <div class="msg bot"><div class="av">🤖</div><div class="bub">✅ เพิ่ม 3 งานแล้วค่ะ
-1. โทรหาพี่แจ๊ค
-2. ส่งใบเสนอราคา
-3. เตรียมของส่งพรุ่งนี้</div></div>
-          <div class="msg me"><div class="bub cmd">เสร็จ 1</div></div>
-          <div class="msg bot"><div class="av">🤖</div><div class="bub">✅ ปิดงาน "โทรหาพี่แจ๊ค" แล้ว
-เหลืออีก 2 งานค่ะ</div></div>
+          <div class="day">กลุ่มทีมงาน</div>
+          <div class="msg me"><div class="bub cmd">เพิ่ม ประชุมทีม พรุ่งนี้ 14:00
+โทรหาพี่แจ๊ค</div></div>
+          <div class="msg bot"><div class="av">🤖</div><div class="bub flex">
+            <div class="fx-top"><b>📋 รายการงาน</b><div style="font-size:12px;color:#888">ค้าง 2 / ทั้งหมด 2</div></div>
+            <div class="fx-row"><span><b>1.</b> ☐ ประชุมทีม<br><span style="color:#06c755;font-size:12px">🗓️ พรุ่งนี้ 14:00</span></span></div>
+            <div class="fx-row"><span><b>2.</b> ☐ โทรหาพี่แจ๊ค</span></div>
+            <div class="fx-btn">🗓️ วางแผนบนปฏิทิน</div>
+          </div></div>
+          <div class="msg bot"><div class="av">🤖</div><div class="bub">⏰ ถึงเวลางาน: ประชุมทีม (กำหนด 14:00)
+<span style="color:#888;font-size:12px">— เตือนอัตโนมัติเมื่อถึงเวลา</span></div></div>
         </div>
       </div>
-      <div class="tip"><b>เร็วๆ นี้ในโมดูลนี้:</b> เชื่อม Google ปฏิทิน · สรุปข่าวด้วย AI · สรุปงานเช้า (Morning Brief) อัตโนมัติ</div>
+      <div class="tip"><b>✨ มีหน้าปฏิทินส่วนตัว:</b> พิมพ์ <code>วางแผน</code> บอทส่งลิงก์ให้ไปดู/จัดงานทั้งหมดเป็นปฏิทินได้เอง · <b>เร็วๆ นี้:</b> เชื่อม Google ปฏิทิน · สรุปข่าว AI · สรุปงานเช้าอัตโนมัติ</div>
     </div>
 
     <!-- BROADCAST -->
