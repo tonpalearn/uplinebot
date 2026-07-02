@@ -17,22 +17,34 @@ function isMockMode(): boolean {
 
 function toLinePayload(messages: OutboundMessage[]): Record<string, unknown>[] {
   return messages.map((m) => {
+    let payload: Record<string, unknown>;
     switch (m.type) {
       case "text":
-        return { type: "text", text: m.text ?? "" };
+        payload = { type: "text", text: m.text ?? "" };
+        break;
       case "flex":
-        return { type: "flex", altText: m.altText ?? "", contents: m.contents ?? {} };
+        payload = { type: "flex", altText: m.altText ?? "", contents: m.contents ?? {} };
+        break;
       case "image":
-        return {
+        payload = {
           type: "image",
           originalContentUrl: m.originalContentUrl ?? "",
           previewImageUrl: m.previewImageUrl ?? m.originalContentUrl ?? "",
         };
+        break;
       case "sticker":
-        return { type: "sticker", packageId: m.packageId ?? "", stickerId: m.stickerId ?? "" };
+        payload = { type: "sticker", packageId: m.packageId ?? "", stickerId: m.stickerId ?? "" };
+        break;
       default:
-        return { type: "text", text: "" };
+        payload = { type: "text", text: "" };
     }
+
+    // LINE accepts a top-level `quickReply` on any message object — attach it when present.
+    if (m.quickReply && m.quickReply.items.length > 0) {
+      payload.quickReply = m.quickReply;
+    }
+
+    return payload;
   });
 }
 

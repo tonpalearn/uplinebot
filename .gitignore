@@ -22,3 +22,6 @@ coverage/
 Thumbs.db
 *.log
 .vercel
+
+# workflow file added via GitHub web UI (CLI OAuth lacks workflow scope)
+.github/

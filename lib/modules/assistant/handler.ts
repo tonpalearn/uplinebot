@@ -1,5 +1,14 @@
 import type { ModuleHandler, LineEvent, ModuleConfig, TenantContext, OutboundMessage, ScheduledJob } from "../types";
-import { parseTodoIntent, addTodos, listTodos, completeTodos, deleteTodos } from "./todo";
+import {
+  parseTodoIntent,
+  addTodos,
+  listTodos,
+  completeTodos,
+  deleteTodos,
+  rescheduleTodo,
+  clearDone,
+  planLink,
+} from "./todo";
 import { handleCalendarIntent } from "./calendar";
 import { handleNewsIntent } from "./news";
 import { handleMorningBriefJob } from "./morning-brief";
@@ -41,15 +50,21 @@ export const AssistantModule: ModuleHandler = {
     if (todoIntent) {
       switch (todoIntent.action) {
         case "add":
-          return addTodos(ctx.targetId, todoIntent.items ?? []);
+          return addTodos(ctx.targetId, todoIntent.items);
         case "list":
           return listTodos(ctx.targetId);
         case "done":
-          return completeTodos(ctx.targetId, todoIntent.indexes ?? []);
+          return completeTodos(ctx.targetId, todoIntent.indexes);
         case "delete":
           return deleteTodos(ctx.targetId, { indexes: todoIntent.indexes });
         case "delete_all":
           return deleteTodos(ctx.targetId, { all: true });
+        case "reschedule":
+          return rescheduleTodo(ctx.targetId, todoIntent.index, todoIntent.whenText);
+        case "clear_done":
+          return clearDone(ctx.targetId);
+        case "plan":
+          return planLink(ctx.targetId);
       }
     }
 

@@ -22,6 +22,16 @@ export interface LineEvent {
   webhookEventId?: string;
 }
 
+/**
+ * A LINE Quick Reply action button. LINE accepts a top-level `quickReply` on ANY
+ * message type; tapping a button sends its `text` back as a new user message.
+ * We only model the `message` action shape (the one the Assistant uses).
+ */
+export interface QuickReplyItem {
+  type: "action";
+  action: { type: "message"; label: string; text: string };
+}
+
 /** A message to be sent back out via the Sender (reply or push). */
 export interface OutboundMessage {
   type: "text" | "flex" | "image" | "sticker";
@@ -36,6 +46,8 @@ export interface OutboundMessage {
   // sticker
   packageId?: string;
   stickerId?: string;
+  // quick reply (valid on any message type, LINE spec) — buttons shown under the bubble
+  quickReply?: { items: QuickReplyItem[] };
 }
 
 /** Resolved tenant/target context, produced by the Context Resolver (lib/context.ts). */

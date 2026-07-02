@@ -1,0 +1,66 @@
+name: Dispatch cron (todo reminders + scheduled jobs)
+
+# WHY THIS EXISTS
+# ---------------
+# The Vercel project (team "upwellness" / slug "ultimatepassion") is on the Hobby plan.
+# On Hobby, Vercel Cron is capped at ONCE PER DAY with ±59 min imprecision, and any
+# sub-daily schedule (e.g. "*/5 * * * *") FAILS the deployment build. Time-based todo
+# reminders (lib/reminders.ts -> scanTodoReminders) need a much tighter cadence than
+# once a day, so this GitHub Actions schedule pings /api/cron/dispatch every 5 minutes
+# instead. It calls the exact same endpoint with the exact same CRON_SECRET auth that
+# Vercel's native cron uses, so behaviour is identical to a native per-5-min cron.
+#
+# SAFE TO RUN EVERY 5 MIN
+#   - dispatchDueJobs() only picks jobs where active AND next_run_at <= now, then advances
+#     next_run_at -> morning_brief / broadcast will NOT re-fire early.
+#   - scanTodoReminders() only picks todos with reminded_at IS NULL, then stamps
+#     reminded_at -> a reminder is never sent twice.
+#
+# WHEN YOU UPGRADE TO VERCEL PRO
+#   Set vercel.json cron to "*/5 * * * *" and disable/delete this workflow — see docs/CRON.md.
+
+on:
+  schedule:
+    # Every 5 minutes. NOTE: GitHub's minimum is 5 min and scheduled runs can be delayed
+    # (sometimes 5-15+ min) under load, and are auto-disabled after 60 days of repo
+    # inactivity. For tighter reliability use a dedicated cron service — see docs/CRON.md.
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {} # manual "Run workflow" button, for testing
+
+concurrency:
+  group: cron-dispatch
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Hit /api/cron/dispatch
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          # Defaults to the production alias. Override in
+          # Settings -> Secrets and variables -> Actions -> Variables (DISPATCH_URL)
+          # if the production URL ever changes.
+          DISPATCH_URL: ${{ vars.DISPATCH_URL || 'https://uplinebot-cyan.vercel.app/api/cron/dispatch' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CRON_SECRET:-}" ]; then
+            echo "::error::CRON_SECRET secret is not set. Add it in Settings -> Secrets and variables -> Actions (must match Vercel's CRON_SECRET)."
+            exit 1
+          fi
+          echo "Pinging $DISPATCH_URL"
+          code=$(curl -sS -o /tmp/body.txt -w '%{http_code}' \
+            --max-time 60 --retry 2 --retry-delay 5 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$DISPATCH_URL")
+          echo "HTTP $code"
+          echo "Response body: $(cat /tmp/body.txt)"
+          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+            echo "::error::dispatch returned HTTP $code (401 = CRON_SECRET mismatch; 404/DNS = wrong DISPATCH_URL)"
+            exit 1
+          fi
+          echo "Dispatch OK."

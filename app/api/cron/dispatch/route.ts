@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dispatchDueJobs } from "@/lib/scheduler/dispatcher";
+import { scanTodoReminders } from "@/lib/reminders";
 
 // Never prerender/cache — invoked on a schedule and must run live per request.
 export const dynamic = "force-dynamic";
@@ -26,8 +27,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const result = await dispatchDueJobs();
-    return NextResponse.json({ ok: true, ...result });
+    // Share a single `now` across both scans so a job and a todo reminder due at the same
+    // instant are evaluated against the same clock.
+    const now = new Date();
+    const jobs = await dispatchDueJobs(now);
+    const reminders = await scanTodoReminders(now);
+    return NextResponse.json({ ok: true, jobs, reminders });
   } catch (err) {
     return NextResponse.json(
       { ok: false, reason: err instanceof Error ? err.message : String(err) },
