@@ -35,6 +35,21 @@ interface LineWebhookBody {
 // Single 200 response used for every outcome (LINE requires 200; details go to logs).
 const OK = () => NextResponse.json({ ok: true }, { status: 200 });
 
+/**
+ * Best-effort observability: record every inbound webhook hit + its outcome to
+ * upl_webhook_log so delivery/signature problems are diagnosable without Vercel logs.
+ * Never throws — a logging failure must not affect the webhook response.
+ */
+async function logHit(destination: string | undefined, outcome: string, detail?: string): Promise<void> {
+  try {
+    await getServiceClient()
+      .from("upl_webhook_log")
+      .insert({ destination: destination ?? null, outcome, detail: detail ?? null });
+  } catch {
+    /* ignore */
+  }
+}
+
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     const rawBody = await req.text();
@@ -44,7 +59,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     try {
       parsed = JSON.parse(rawBody);
     } catch {
-      console.warn("[webhook] ignored: body is not valid JSON");
+      await logHit(undefined, "parse_error", `hasSig=${!!signature} len=${rawBody.length}`);
       return OK();
     }
 
@@ -52,7 +67,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     if (!bot) {
       // Not onboarded yet (or wrong Bot User ID entered at onboarding). LINE's Verify
       // button hits this before a bot is connected — return 200 so Verify passes.
-      console.warn(`[webhook] ignored: no bot for destination ${parsed.destination}`);
+      await logHit(parsed.destination, "no_bot", `events=${parsed.events?.length ?? 0}`);
       return OK();
     }
 
@@ -60,11 +75,16 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const isValidSignature = verifyLineSignature(rawBody, signature, channelSecret);
     if (!isValidSignature) {
       // Do NOT process (protects against forged events) but still 200 to keep LINE happy.
-      console.warn(`[webhook] rejected: invalid signature for bot ${bot.id}`);
+      await logHit(parsed.destination, "bad_signature", `hasSig=${!!signature} bot=${bot.id}`);
       return OK();
     }
 
     const accessToken = await getBotAccessToken(bot.id);
+
+    const kinds = (parsed.events ?? [])
+      .map((e) => `${e.type}${e.message?.type ? ":" + e.message.type : ""}`)
+      .join(",");
+    await logHit(parsed.destination, "processed", `events=${parsed.events?.length ?? 0} [${kinds}]`);
 
     for (const event of parsed.events ?? []) {
       try {
@@ -72,11 +92,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         const outbound = await routeEvent(event, ctx);
 
         if (outbound.length > 0 && event.replyToken) {
-          await replyMessage(accessToken, event.replyToken, outbound);
+          const sent = await replyMessage(accessToken, event.replyToken, outbound);
+          if (!sent.ok) {
+            await logHit(parsed.destination, "reply_failed", `status=${sent.status}`);
+          }
         }
       } catch (err) {
-        // Per-event failure must not fail the batch — log and continue.
-        console.error("[webhook] failed to process event:", err);
+        await logHit(parsed.destination, "event_error", err instanceof Error ? err.message : String(err));
       }
     }
 
@@ -84,7 +106,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   } catch (err) {
     // Any unexpected error (e.g. missing env) must still return 200 to LINE, otherwise
     // LINE retries the delivery (duplicate processing) or disables the webhook.
-    console.error("[webhook] unexpected error (returning 200 anyway):", err);
+    await logHit(undefined, "error", err instanceof Error ? err.message : String(err));
     return OK();
   }
 }
