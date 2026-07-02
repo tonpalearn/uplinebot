@@ -53,7 +53,7 @@
 1. ไปที่ repo `tonpalearn/uplinebot` → **Settings → Secrets and variables → Actions → New repository secret**
    - ชื่อ: `CRON_SECRET`
    - ค่า: ต้องตรงกับ `CRON_SECRET` ที่ตั้งไว้ใน Vercel (ดูได้จาก Vercel → Project → Settings → Environment Variables) — ตอนนี้ prod ตั้งค่านี้ไว้แล้ว
-2. (ถ้าโดเมนไม่ใช่ `uplinebot-cyan.vercel.app`) เพิ่ม **Variable** ชื่อ `DISPATCH_URL`
+2. (ถ้าโดเมนไม่ใช่ `uplinebot.vercel.app`) เพิ่ม **Variable** ชื่อ `DISPATCH_URL`
    = URL เต็มของปลายทาง เช่น `https://<โดเมนจริง>/api/cron/dispatch`
 3. `git add .github/workflows/cron-dispatch.yml && git commit && git push origin main`
    — ตารางเวลาจะเริ่มทำงานหลังไฟล์อยู่บน branch `main` เท่านั้น
@@ -64,7 +64,7 @@
   ต้องได้ `HTTP 200` และ body ประมาณ `{"ok":true,"jobs":...,"reminders":{"sent":...}}`
 - **ยิงมือจากเครื่อง** (ใส่ค่า `CRON_SECRET` จริงแทน `xxxx`):
   ```bash
-  curl -i -H "Authorization: Bearer xxxx" https://uplinebot-cyan.vercel.app/api/cron/dispatch
+  curl -i -H "Authorization: Bearer xxxx" https://uplinebot.vercel.app/api/cron/dispatch
   ```
   - ได้ `200` = ผ่าน · ได้ `401` = `CRON_SECRET` ไม่ตรง · ได้ `404`/DNS error = URL ผิด
 
@@ -76,14 +76,14 @@
 ## 4) ทางเลือกที่นิ่งกว่า GitHub Actions (ถ้าต้องการความชัวร์)
 
 ใช้บริการ cron ภายนอกที่ทำหน้าที่นี้โดยเฉพาะ ตั้งให้ยิง **ทุก 1–5 นาที** ไปที่
-`https://uplinebot-cyan.vercel.app/api/cron/dispatch` พร้อม header
+`https://uplinebot.vercel.app/api/cron/dispatch` พร้อม header
 `Authorization: Bearer <CRON_SECRET>` (method GET):
 
 - **cron-job.org** — ฟรี, ตั้งได้ทุก 1 นาที, นิ่ง (แนะนำสำหรับ production)
 - **EasyCron** / **UptimeRobot** (โหมด HTTP monitor + custom header) — ทางเลือกอื่นที่ทำได้เหมือนกัน
 
 ตั้งค่าในบริการพวกนี้:
-- URL: `https://uplinebot-cyan.vercel.app/api/cron/dispatch`
+- URL: `https://uplinebot.vercel.app/api/cron/dispatch`
 - Method: `GET`
 - Header: `Authorization: Bearer <CRON_SECRET ค่าจริง>`
 - Interval: ทุก 5 นาที (หรือ 1 นาทีถ้าต้องการเตือนแม่นขึ้น)

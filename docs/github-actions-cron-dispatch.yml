@@ -45,7 +45,7 @@ jobs:
           # Defaults to the production alias. Override in
           # Settings -> Secrets and variables -> Actions -> Variables (DISPATCH_URL)
           # if the production URL ever changes.
-          DISPATCH_URL: ${{ vars.DISPATCH_URL || 'https://uplinebot-cyan.vercel.app/api/cron/dispatch' }}
+          DISPATCH_URL: ${{ vars.DISPATCH_URL || 'https://uplinebot.vercel.app/api/cron/dispatch' }}
         run: |
           set -euo pipefail
           if [ -z "${CRON_SECRET:-}" ]; then

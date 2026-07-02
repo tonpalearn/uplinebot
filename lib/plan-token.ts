@@ -14,7 +14,7 @@ import { getServiceClient } from "./db";
  *   or null if unknown. tenantId comes via target → bot join (upl_targets has no tenant_id).
  */
 
-const DEFAULT_BASE_URL = "https://uplinebot-cyan.vercel.app";
+const DEFAULT_BASE_URL = "https://uplinebot.vercel.app";
 
 /** Base URL used to build the /plan/<token> link. Trailing slash trimmed. */
 export function planBaseUrl(): string {
