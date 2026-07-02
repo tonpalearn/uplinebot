@@ -174,7 +174,8 @@ async function getProviderApiKey(tenantId: string, provider: string): Promise<st
     throw new Error(`No connected "${provider}" credential found for tenant ${tenantId}`);
   }
 
-  return decrypt(Buffer.from(data.credential_enc));
+  // credential_enc is a base64 text column (migration 0002) — pass the string straight in.
+  return decrypt(data.credential_enc);
 }
 
 async function getBotAccessToken(botId: string): Promise<string> {
@@ -189,5 +190,6 @@ async function getBotAccessToken(botId: string): Promise<string> {
     throw new Error(`Failed to load access token for bot ${botId}`);
   }
 
-  return decrypt(Buffer.from(data.access_token_enc));
+  // access_token_enc is a base64 text column (migration 0002) — pass the string straight in.
+  return decrypt(data.access_token_enc);
 }

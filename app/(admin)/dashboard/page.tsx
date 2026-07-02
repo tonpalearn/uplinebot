@@ -90,12 +90,32 @@ export default function DashboardPage() {
     >
       <div style={{ maxWidth: 1200, margin: "0 auto" }}>
         <header style={{ marginBottom: 28 }}>
-          <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>
-            UP Line — Admin Dashboard
-          </h1>
-          <p style={{ color: COLORS.textMuted, marginTop: 6, fontSize: 14 }}>
-            Module Catalog — เปิด/ปิดและซื้อโมดูลเพิ่มแบบ à la carte
-          </p>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+            <div>
+              <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>
+                UP Line — Admin Dashboard
+              </h1>
+              <p style={{ color: COLORS.textMuted, marginTop: 6, fontSize: 14 }}>
+                Module Catalog — เปิด/ปิดและซื้อโมดูลเพิ่มแบบ à la carte
+              </p>
+            </div>
+            <a
+              href="/onboarding"
+              style={{
+                flex: "0 0 auto",
+                padding: "10px 18px",
+                borderRadius: 10,
+                background: COLORS.blue,
+                color: "#0a0e17",
+                fontWeight: 700,
+                fontSize: 14,
+                textDecoration: "none",
+                whiteSpace: "nowrap",
+              }}
+            >
+              + เพิ่มลูกค้าใหม่
+            </a>
+          </div>
           <p style={{ color: "#665a33", background: "rgba(242,193,78,0.08)", display: "inline-block", marginTop: 10, padding: "4px 10px", borderRadius: 8, fontSize: 12 }}>
             TODO: ใช้ hardcoded tenant_id ชั่วคราว — รอผูก Supabase Auth session จริง
           </p>

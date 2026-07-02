@@ -85,7 +85,8 @@ async function getBotChannelSecret(botId: string): Promise<string> {
     throw new Error(`Failed to load channel secret for bot ${botId}`);
   }
 
-  return decrypt(Buffer.from(data.channel_secret_enc));
+  // channel_secret_enc is a base64 text column (migration 0002) — pass the string straight in.
+  return decrypt(data.channel_secret_enc);
 }
 
 async function getBotAccessToken(botId: string): Promise<string> {
@@ -100,5 +101,6 @@ async function getBotAccessToken(botId: string): Promise<string> {
     throw new Error(`Failed to load access token for bot ${botId}`);
   }
 
-  return decrypt(Buffer.from(data.access_token_enc));
+  // access_token_enc is a base64 text column (migration 0002) — pass the string straight in.
+  return decrypt(data.access_token_enc);
 }

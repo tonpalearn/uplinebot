@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServiceClient } from "@/lib/db";
+import { requireAdmin, AdminAuthError } from "@/lib/admin-auth";
+
+// Grants entitlements at runtime via the service client — never prerender.
+export const dynamic = "force-dynamic";
 
 /**
  * POST /api/admin/subscriptions
@@ -9,6 +13,9 @@ import { getServiceClient } from "@/lib/db";
  * request:  { "module_key": "slip_verification", "billing_mode": "addon" }
  * response: { "ok": true, "subscription": { module_key, enabled, addon_price_thb,
  *              requires_api_key, next_step } }
+ *
+ * Guarded by requireAdmin (x-admin-token): this route grants entitlements, so it must be
+ * protected — otherwise anyone could enable paid modules for any tenant.
  *
  * NOTE: tenant identity in a real deployment comes from the authenticated admin
  * session (Supabase auth on the Dashboard). This stub-free route accepts an explicit
@@ -23,6 +30,15 @@ interface SubscriptionRequestBody {
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  try {
+    requireAdmin(req);
+  } catch (err) {
+    if (err instanceof AdminAuthError) {
+      return NextResponse.json({ ok: false, reason: "unauthorized" }, { status: 401 });
+    }
+    throw err;
+  }
+
   let body: SubscriptionRequestBody;
   try {
     body = await req.json();

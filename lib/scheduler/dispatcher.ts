@@ -189,7 +189,8 @@ async function lookupBotCredentials(botId: string): Promise<{ accessToken: strin
 
   if (error || !data) return null;
 
-  return { accessToken: decrypt(Buffer.from(data.access_token_enc)) };
+  // access_token_enc is a base64 text column (migration 0002) — pass the string straight in.
+  return { accessToken: decrypt(data.access_token_enc) };
 }
 
 async function lookupLineSourceId(targetId: string): Promise<string> {
