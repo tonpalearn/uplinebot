@@ -11,16 +11,26 @@ export const dynamic = "force-dynamic";
  * ดูโมดูลทั้งหมด + ราคา + requires_api_key".
  */
 export async function GET(): Promise<NextResponse> {
-  const supabase = getServiceClient();
+  try {
+    const supabase = getServiceClient();
 
-  const { data, error } = await supabase
-    .from("upl_module_catalog")
-    .select("module_key, name, requires_api_key, tier_min, addon_price_thb, is_core")
-    .order("module_key", { ascending: true });
+    const { data, error } = await supabase
+      .from("upl_module_catalog")
+      .select("module_key, name, requires_api_key, tier_min, addon_price_thb, is_core")
+      .order("module_key", { ascending: true });
 
-  if (error) {
-    return NextResponse.json({ ok: false, reason: error.message }, { status: 500 });
+    if (error) {
+      return NextResponse.json({ ok: false, reason: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ ok: true, modules: data });
+  } catch (err) {
+    // getServiceClient() throws if SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are unset.
+    // Always return JSON (never an empty 500 body) so the frontend shows a clear message
+    // instead of "Unexpected end of JSON input".
+    return NextResponse.json(
+      { ok: false, reason: err instanceof Error ? err.message : "server_misconfigured" },
+      { status: 500 }
+    );
   }
-
-  return NextResponse.json({ ok: true, modules: data });
 }
