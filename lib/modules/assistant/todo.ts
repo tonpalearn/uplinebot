@@ -379,10 +379,15 @@ export function parseTodoIntent(text: string): ParsedTodoIntent | null {
     return { action: "list" };
   }
 
-  // "เพิ่ม <text>" — add (multi-line: first-line remainder + each following line).
-  const addMatch = firstLine.match(/^เพิ่ม\s+(.+)$/);
+  // "เพิ่ม" — add. The first task may sit on the SAME line ("เพิ่ม ซื้อของ") OR the "เพิ่ม"
+  // may stand alone with the first task on the NEXT line. Either way: 1 line = 1 task.
+  // (Requires "เพิ่ม" to be its own word — "เพิ่มเติม..." is NOT an add command.)
+  const addMatch = firstLine.match(/^เพิ่ม(?:\s+(.+))?$/);
   if (addMatch) {
-    return { action: "add", items: [addMatch[1], ...lines.slice(1)] };
+    const firstRemainder = (addMatch[1] ?? "").trim();
+    const rest = lines.slice(1);
+    const items = firstRemainder ? [firstRemainder, ...rest] : rest;
+    return { action: "add", items };
   }
 
   // Anything else is not a todo command — stay silent (no plain-text add).

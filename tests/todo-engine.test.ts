@@ -248,6 +248,15 @@ describe("(1) parseTodoIntent", () => {
     });
   });
 
+  it("'เพิ่ม' alone on the first line → tasks start on the next line", () => {
+    expect(parseTodoIntent("เพิ่ม\nซื้อของ\nโทรหาลูกค้า")).toEqual({
+      action: "add",
+      items: ["ซื้อของ", "โทรหาลูกค้า"],
+    });
+    // "เพิ่ม" must be its own word — "เพิ่มเติม …" is not an add command.
+    expect(parseTodoIntent("เพิ่มเติมรายละเอียด")).toBeNull();
+  });
+
   it("ค้าง (primary) + งานวันนี้ / รายการ / list / todo → list", () => {
     for (const kw of ["ค้าง", "งานค้าง", "ดูงาน", "งานวันนี้", "รายการ", "list", "todo"]) {
       expect(parseTodoIntent(kw)).toEqual({ action: "list" });
