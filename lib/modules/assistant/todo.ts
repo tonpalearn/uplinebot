@@ -326,13 +326,12 @@ export async function planLink(targetId: string): Promise<OutboundMessage[]> {
  *   - "เลื่อน <number> <when>"                     → reschedule
  *   - "ลบ <numbers>" | "เสร็จ <numbers>" | "ปิด …" → done  (ปิดงาน = close/complete a task)
  *   - "ค้าง" | "งานค้าง" | "ดูงาน" | "งานวันนี้" | … → list (show OUTSTANDING tasks)
- *   - "เพิ่ม <text>"                               → add (explicit prefix, still supported)
- *   - ANY other text                              → add — every non-empty line becomes one task
+ *   - "เพิ่ม <text>"                               → add (multi-line: first-line remainder + each next line)
+ *   - ANY other text                              → null (NOT a todo — the bot stays silent)
  *
- * Design note: plain text = add. So this returns "add" as the fallback for anything that
- * isn't one of the commands above. The Assistant module is LAST in ROUTER_PRIORITY (after
- * Broadcast), so a bot's configured broadcast trigger keywords still win before a message
- * is turned into a todo.
+ * Design note: adding a task requires the "เพิ่ม" prefix. Plain text is intentionally NOT
+ * turned into a todo, so the bot never turns ordinary group chatter into tasks. Multi-line
+ * after "เพิ่ม" is still 1 line = 1 task.
  */
 export function parseTodoIntent(text: string): ParsedTodoIntent | null {
   const trimmed = (text ?? "").trim();
@@ -380,10 +379,14 @@ export function parseTodoIntent(text: string): ParsedTodoIntent | null {
     return { action: "list" };
   }
 
-  // "เพิ่ม <text>" — explicit prefix still works (strip it); otherwise plain text = add.
+  // "เพิ่ม <text>" — add (multi-line: first-line remainder + each following line).
   const addMatch = firstLine.match(/^เพิ่ม\s+(.+)$/);
-  const items = addMatch ? [addMatch[1], ...lines.slice(1)] : lines;
-  return { action: "add", items };
+  if (addMatch) {
+    return { action: "add", items: [addMatch[1], ...lines.slice(1)] };
+  }
+
+  // Anything else is not a todo command — stay silent (no plain-text add).
+  return null;
 }
 
 function extractNumbers(s: string): number[] {

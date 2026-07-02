@@ -283,14 +283,14 @@ describe("routeEvent — router priority order (SYSTEM-DESIGN.md §4.2)", () => 
 
     // 1:1 chat (sourceType "user") so the group reply-mode gate passes through and the
     // text reaches the modules — this test is about priority order, not group gating.
-    const event = textEvent("นัดหมาย ประชุมทีมพรุ่งนี้", { source: { type: "user", userId: "u1" } });
+    const event = textEvent("เพิ่ม ประชุมทีมพรุ่งนี้", { source: { type: "user", userId: "u1" } });
     const ctx = baseCtx({ sourceType: "user" });
 
     const result = await routeEvent(event, ctx);
 
     // slip_verification.matchesIntent() is false for non-image events; broadcast has no
     // trigger keyword configured, so the router proceeds to assistant_productivity, which
-    // treats the plain text as a todo add.
+    // handles the "เพิ่ม …" todo-add command.
     expect(result.length).toBeGreaterThan(0);
   });
 });

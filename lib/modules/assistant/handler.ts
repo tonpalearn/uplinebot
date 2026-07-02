@@ -16,21 +16,19 @@ import { handleMorningBriefJob } from "./morning-brief";
  * Per SYSTEM-DESIGN.md §4.2 (ModuleHandler interface) and SPEC.md §6.3.
  *
  * Todo Manager is fully implemented (real CRUD against upl_todos, target-scoped).
- * UX: a plain text message IS a todo (1 line = 1 task) — no "เพิ่ม" prefix needed. A small
- * set of command words (ค้าง / ลบ N / เลื่อน / วางแผน / ลบทั้งหมด / ล้างที่เสร็จ) are
- * recognised first; everything else is added as a task. This module is LAST in
- * ROUTER_PRIORITY so broadcast trigger keywords still win before text becomes a todo.
- * Calendar Sync & News Digest remain future work (Google OAuth) and are no longer keyword-
- * intercepted — those words simply become todos until the real integrations ship.
+ * UX: adding a task needs the "เพิ่ม" prefix ("เพิ่ม <งาน>", multi-line = 1 line/task). A set
+ * of command words (ค้าง / ลบ N / เลื่อน / วางแผน / ลบทั้งหมด / ล้างที่เสร็จ) are also
+ * recognised. Any other plain text is NOT a todo, so ordinary chat is never turned into a
+ * task. Calendar Sync & News Digest remain future work (Google OAuth).
  */
 
 export const AssistantModule: ModuleHandler = {
   key: "assistant_productivity",
 
   matchesIntent(event: LineEvent, _config: ModuleConfig): boolean {
-    // Any non-empty text message is handled by the Todo manager (plain text = add a task).
+    // Handled only when the text is a todo command ("เพิ่ม …", ค้าง, ลบ N, เลื่อน, วางแผน, …).
     if (event.type !== "message" || event.message?.type !== "text") return false;
-    return !!event.message.text?.trim();
+    return parseTodoIntent(event.message.text ?? "") !== null;
   },
 
   async handleEvent(event: LineEvent, ctx: TenantContext): Promise<OutboundMessage[]> {

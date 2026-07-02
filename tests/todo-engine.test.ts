@@ -283,14 +283,15 @@ describe("(1) parseTodoIntent", () => {
     }
   });
 
-  it("plain text (no prefix) → add each line as a task; empty → null", () => {
-    expect(parseTodoIntent("ซื้อของที่ตลาด")).toEqual({ action: "add", items: ["ซื้อของที่ตลาด"] });
-    expect(parseTodoIntent("โทรหาลูกค้า\nส่งเอกสาร")).toEqual({
-      action: "add",
-      items: ["โทรหาลูกค้า", "ส่งเอกสาร"],
-    });
+  it("plain text WITHOUT เพิ่ม → null (not a todo); เพิ่ม multi-line = 1 line/task", () => {
+    expect(parseTodoIntent("ซื้อของที่ตลาด")).toBeNull();
+    expect(parseTodoIntent("สวัสดีครับวันนี้อากาศดีมาก")).toBeNull();
     expect(parseTodoIntent("")).toBeNull();
     expect(parseTodoIntent("   ")).toBeNull();
+    expect(parseTodoIntent("เพิ่ม ซื้อของ\nโทรหาลูกค้า\nส่งเอกสาร")).toEqual({
+      action: "add",
+      items: ["ซื้อของ", "โทรหาลูกค้า", "ส่งเอกสาร"],
+    });
   });
 });
 

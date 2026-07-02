@@ -376,16 +376,13 @@ describe("AssistantModule — Todo Manager (mocked Supabase boundary)", () => {
     expect(text).not.toContain("งานหนึ่ง"); // done → hidden, list renumbers to 1,2
   });
 
-  it("(5) plain text with no command is added as a task (no เพิ่ม prefix needed)", async () => {
-    const event = makeTextEvent("ซื้อของที่ตลาด");
-    expect(AssistantModule.matchesIntent(event, baseConfig)).toBe(true);
+  it("(5) plain text without เพิ่ม is NOT a todo (no match, nothing stored)", async () => {
+    const event = makeTextEvent("สวัสดีครับวันนี้อากาศดีมาก");
+    expect(AssistantModule.matchesIntent(event, baseConfig)).toBe(false);
 
     const result = await AssistantModule.handleEvent(event, makeCtx());
-    const rows = store.filter((r) => r.target_id === TARGET_ID);
-    expect(rows).toHaveLength(1);
-    expect(rows[0].content).toBe("ซื้อของที่ตลาด");
-    // Reply is the Flex list showing the new task.
-    expect(result.find((m) => m.type === "flex")).toBeDefined();
+    expect(result).toEqual([]);
+    expect(store).toHaveLength(0);
   });
 
   it("(6) adding with a Thai date/time stores due_at and strips it from the content", async () => {
