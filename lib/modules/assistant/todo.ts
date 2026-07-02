@@ -60,6 +60,16 @@ async function fetchTodos(targetId: string): Promise<TodoRow[]> {
   return sortTodos(rows);
 }
 
+/**
+ * The chat list shows OUTSTANDING ("ค้าง") tasks only — done tasks are hidden from the
+ * numbered card (they still live in the DB and appear on the /plan calendar page). The
+ * visible numbers therefore map to open tasks, so "ลบ N" (close) and "เลื่อน N" operate
+ * on exactly what the user sees. Completing a task makes it drop off the next list.
+ */
+async function fetchOpenTodos(targetId: string): Promise<TodoRow[]> {
+  return (await fetchTodos(targetId)).filter((r) => !r.done);
+}
+
 /** coalesce(sort_order, epoch(created_at)) ascending, created_at as a stable tiebreak. */
 function sortTodos(rows: TodoRow[]): TodoRow[] {
   return rows.slice().sort((a, b) => {
@@ -85,14 +95,14 @@ function toListItems(rows: TodoRow[]): TodoListItem[] {
   }));
 }
 
-/** The refreshed Flex list reply, rebuilt from the current DB state. */
+/** The refreshed Flex list reply (outstanding tasks only), rebuilt from the current DB state. */
 async function listReply(targetId: string, now: Date): Promise<OutboundMessage[]> {
-  const rows = await fetchTodos(targetId);
+  const rows = await fetchOpenTodos(targetId);
   if (rows.length === 0) {
     return [
       {
         type: "text",
-        text: "ยังไม่มีงานในรายการ พิมพ์ \"เพิ่ม [ชื่องาน]\" เพื่อเริ่มได้เลย",
+        text: "ยังไม่มีงานค้าง 🎉\nพิมพ์งานที่ต้องทำได้เลย (1 บรรทัด = 1 งาน) · ใส่วันเวลาได้ เช่น \"ประชุม พรุ่งนี้ 14:00\"",
         quickReply: todoQuickReply(),
       },
     ];
@@ -148,13 +158,13 @@ export async function listTodos(targetId: string, now: Date = new Date()): Promi
   return listReply(targetId, now);
 }
 
-/** เสร็จ [เลข] — mark the given visible numbers done, then show the refreshed list. */
+/** ปิดงาน (ลบ/เสร็จ [เลข]) — mark the given visible numbers done, then show the refreshed list. */
 export async function completeTodos(
   targetId: string,
   indexes: number[],
   now: Date = new Date()
 ): Promise<OutboundMessage[]> {
-  const rows = await fetchTodos(targetId);
+  const rows = await fetchOpenTodos(targetId);
   const supabase = getServiceClient();
 
   const targets = indexes
@@ -180,7 +190,11 @@ export async function completeTodos(
     return [{ type: "text", text: `อัปเดตสถานะไม่สำเร็จ: ${error.message}` }];
   }
 
-  return listReply(targetId, now);
+  const confirm: OutboundMessage = {
+    type: "text",
+    text: `✅ ปิดงานแล้ว ${targets.length} งาน`,
+  };
+  return [confirm, ...(await listReply(targetId, now))];
 }
 
 /** ลบ [เลข] / ลบทั้งหมด — delete the given visible numbers, or every todo for the target. */
@@ -240,7 +254,7 @@ export async function rescheduleTodo(
   whenText: string,
   now: Date = new Date()
 ): Promise<OutboundMessage[]> {
-  const rows = await fetchTodos(targetId);
+  const rows = await fetchOpenTodos(targetId);
   const target = rows[index - 1];
 
   if (!target) {
@@ -304,16 +318,21 @@ export async function planLink(targetId: string): Promise<OutboundMessage[]> {
 // ── Intent parsing ───────────────────────────────────────────────────────────────────────
 
 /**
- * Thai keyword intent matcher for the Todo Manager. Returns a discriminated union
- * (or null when nothing matches). Supported surface:
- *   - "เพิ่ม <text>"                        → add (multi-line: first line remainder + each next line)
- *   - "งานวันนี้" | "รายการ" | "list" | "todo" → list
- *   - "รีเฟรช" | "relist"                    → list (explicit renumber)
- *   - "เสร็จ <numbers>"                      → done
- *   - "ลบ <numbers>" | "ลบทั้งหมด"           → delete / delete_all
- *   - "เลื่อน <number> <when>"               → reschedule
- *   - "ล้างที่เสร็จ" | "เคลียร์ที่เสร็จ"       → clear_done
- *   - "วางแผน" | "ปฏิทิน" | "calendar"       → plan
+ * Thai keyword intent matcher for the Todo Manager. Returns a discriminated union, or
+ * null only for an empty message. Command surface (checked in this order on the first line):
+ *   - "ล้างที่เสร็จ" | "เคลียร์ที่เสร็จ"            → clear_done
+ *   - "วางแผน" | "ปฏิทิน" | "calendar"            → plan (calendar link)
+ *   - "ลบทั้งหมด" | "ล้างทั้งหมด"                  → delete_all (wipe the whole list)
+ *   - "เลื่อน <number> <when>"                     → reschedule
+ *   - "ลบ <numbers>" | "เสร็จ <numbers>" | "ปิด …" → done  (ปิดงาน = close/complete a task)
+ *   - "ค้าง" | "งานค้าง" | "ดูงาน" | "งานวันนี้" | … → list (show OUTSTANDING tasks)
+ *   - "เพิ่ม <text>"                               → add (explicit prefix, still supported)
+ *   - ANY other text                              → add — every non-empty line becomes one task
+ *
+ * Design note: plain text = add. So this returns "add" as the fallback for anything that
+ * isn't one of the commands above. The Assistant module is LAST in ROUTER_PRIORITY (after
+ * Broadcast), so a bot's configured broadcast trigger keywords still win before a message
+ * is turned into a todo.
  */
 export function parseTodoIntent(text: string): ParsedTodoIntent | null {
   const trimmed = (text ?? "").trim();
@@ -332,8 +351,8 @@ export function parseTodoIntent(text: string): ParsedTodoIntent | null {
     return { action: "plan" };
   }
 
-  // ลบทั้งหมด
-  if (/^ลบทั้งหมด$/i.test(firstLine)) {
+  // ลบทั้งหมด / ล้างทั้งหมด — wipe everything
+  if (/^(ลบทั้งหมด|ล้างทั้งหมด|เคลียร์ทั้งหมด)$/i.test(firstLine)) {
     return { action: "delete_all" };
   }
 
@@ -347,37 +366,24 @@ export function parseTodoIntent(text: string): ParsedTodoIntent | null {
     }
   }
 
-  // ลบ <numbers>
-  const deleteMatch = firstLine.match(/^ลบ\s+(.+)$/);
-  if (deleteMatch) {
-    const indexes = extractNumbers(deleteMatch[1]);
-    if (indexes.length > 0) {
-      return { action: "delete", indexes };
-    }
-  }
-
-  // เสร็จ <numbers>
-  const doneMatch = firstLine.match(/^เสร็จ\s+(.+)$/);
-  if (doneMatch) {
-    const indexes = extractNumbers(doneMatch[1]);
+  // ปิดงาน: "ลบ <numbers>" (primary) / "เสร็จ <numbers>" / "ปิด <numbers>" → done
+  const closeMatch = firstLine.match(/^(?:ลบ|เสร็จ|ปิด|ปิดงาน|done)\s+(.+)$/i);
+  if (closeMatch) {
+    const indexes = extractNumbers(closeMatch[1]);
     if (indexes.length > 0) {
       return { action: "done", indexes };
     }
   }
 
-  // list / relist
-  if (/^(งานวันนี้|รายการ|รายการงาน|list|todo|รีเฟรช|relist)$/i.test(firstLine)) {
+  // ดูงานค้าง: "ค้าง" (primary) + aliases
+  if (/^(ค้าง|งานค้าง|ดูงาน|งานวันนี้|รายการ|รายการงาน|list|todo|รีเฟรช|relist)$/i.test(firstLine)) {
     return { action: "list" };
   }
 
-  // เพิ่ม <text> (multi-line: remainder of first line + all following lines)
+  // "เพิ่ม <text>" — explicit prefix still works (strip it); otherwise plain text = add.
   const addMatch = firstLine.match(/^เพิ่ม\s+(.+)$/);
-  if (addMatch) {
-    const items = [addMatch[1], ...lines.slice(1)];
-    return { action: "add", items };
-  }
-
-  return null;
+  const items = addMatch ? [addMatch[1], ...lines.slice(1)] : lines;
+  return { action: "add", items };
 }
 
 function extractNumbers(s: string): number[] {

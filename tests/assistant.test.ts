@@ -310,7 +310,7 @@ describe("AssistantModule — Todo Manager (mocked Supabase boundary)", () => {
     expect(text).toContain("ส่งเอกสาร");
     // Quick Reply attached with the three fixed buttons.
     expect(msg.quickReply?.items.map((i) => i.action.text)).toEqual([
-      "งานวันนี้",
+      "ค้าง",
       "วางแผน",
       "ล้างที่เสร็จ",
     ]);
@@ -332,53 +332,60 @@ describe("AssistantModule — Todo Manager (mocked Supabase boundary)", () => {
     expect(text).not.toContain("งานของคนอื่น");
   });
 
-  it("(3) marking one done by number works and re-renders the list", async () => {
+  it("(3) ปิดงานด้วยเลข (เสร็จ/ลบ N) marks it done and hides it from the ค้าง list", async () => {
     await AssistantModule.handleEvent(makeTextEvent("เพิ่ม งานหนึ่ง\nงานสอง\nงานสาม"), makeCtx());
 
     const doneEvent = makeTextEvent("เสร็จ 2");
     expect(AssistantModule.matchesIntent(doneEvent, baseConfig)).toBe(true);
 
     const doneResult = await AssistantModule.handleEvent(doneEvent, makeCtx());
-    // Re-rendered Flex list; the done item is prefixed with the ✅ marker.
-    expect(doneResult[0].type).toBe("flex");
-    expect(flexText(doneResult)).toContain("✅ งานสอง");
+    // Reply = a confirmation text + the refreshed OPEN-only Flex list (done tasks hidden).
+    expect(doneResult[0].type).toBe("text");
+    expect(doneResult[0].text).toContain("ปิดงาน");
+    const listText = flexText(doneResult);
+    expect(listText).not.toContain("งานสอง"); // done → hidden
+    expect(listText).toContain("งานหนึ่ง");
+    expect(listText).toContain("งานสาม");
 
     const rowsForTarget = store.filter((r) => r.target_id === TARGET_ID);
     expect(rowsForTarget.find((r) => r.content === "งานสอง")?.done).toBe(true);
     expect(rowsForTarget.find((r) => r.content === "งานหนึ่ง")?.done).toBe(false);
-    expect(rowsForTarget.find((r) => r.content === "งานสาม")?.done).toBe(false);
 
-    const listResult = await AssistantModule.handleEvent(makeTextEvent("งานวันนี้"), makeCtx());
-    expect(flexText(listResult)).toContain("ค้าง 2/ทั้งหมด 3");
+    const listResult = await AssistantModule.handleEvent(makeTextEvent("ค้าง"), makeCtx());
+    expect(flexText(listResult)).toContain("ค้าง 2/ทั้งหมด 2");
   });
 
-  it("(4) removing one by number works and renumbers contiguously", async () => {
+  it("(4) ลบ N closes the task (marks done); it drops off the list and remaining renumber", async () => {
     await AssistantModule.handleEvent(makeTextEvent("เพิ่ม งานหนึ่ง\nงานสอง\nงานสาม"), makeCtx());
 
-    const deleteEvent = makeTextEvent("ลบ 1");
-    expect(AssistantModule.matchesIntent(deleteEvent, baseConfig)).toBe(true);
+    const closeEvent = makeTextEvent("ลบ 1");
+    expect(AssistantModule.matchesIntent(closeEvent, baseConfig)).toBe(true);
 
-    const deleteResult = await AssistantModule.handleEvent(deleteEvent, makeCtx());
-    expect(deleteResult[0].type).toBe("flex");
+    const closeResult = await AssistantModule.handleEvent(closeEvent, makeCtx());
+    expect(closeResult[0].type).toBe("text"); // confirmation
+    expect(closeResult[0].text).toContain("ปิดงาน");
 
+    // ลบ = close: งานหนึ่ง is marked done (still stored), งานสอง/งานสาม remain open.
     const rowsForTarget = store.filter((r) => r.target_id === TARGET_ID);
-    expect(rowsForTarget).toHaveLength(2);
-    expect(rowsForTarget.map((r) => r.content)).toEqual(["งานสอง", "งานสาม"]);
+    expect(rowsForTarget).toHaveLength(3);
+    expect(rowsForTarget.find((r) => r.content === "งานหนึ่ง")?.done).toBe(true);
 
-    const text = flexText(deleteResult);
-    expect(text).toContain("ค้าง 2/ทั้งหมด 2");
+    const text = flexText(closeResult);
     expect(text).toContain("งานสอง");
     expect(text).toContain("งานสาม");
-    expect(text).not.toContain("งานหนึ่ง");
+    expect(text).not.toContain("งานหนึ่ง"); // done → hidden, list renumbers to 1,2
   });
 
-  it("(5) unrelated text does not match", async () => {
-    const event = makeTextEvent("สวัสดีครับวันนี้อากาศดีมาก");
-    expect(AssistantModule.matchesIntent(event, baseConfig)).toBe(false);
+  it("(5) plain text with no command is added as a task (no เพิ่ม prefix needed)", async () => {
+    const event = makeTextEvent("ซื้อของที่ตลาด");
+    expect(AssistantModule.matchesIntent(event, baseConfig)).toBe(true);
 
     const result = await AssistantModule.handleEvent(event, makeCtx());
-    expect(result).toEqual([]);
-    expect(store).toHaveLength(0);
+    const rows = store.filter((r) => r.target_id === TARGET_ID);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].content).toBe("ซื้อของที่ตลาด");
+    // Reply is the Flex list showing the new task.
+    expect(result.find((m) => m.type === "flex")).toBeDefined();
   });
 
   it("(6) adding with a Thai date/time stores due_at and strips it from the content", async () => {
@@ -442,10 +449,10 @@ describe("AssistantModule — Todo Manager (mocked Supabase boundary)", () => {
   });
 
   it("(10) empty list replies with a plain-text prompt (with Quick Reply), not a Flex card", async () => {
-    const result = await AssistantModule.handleEvent(makeTextEvent("งานวันนี้"), makeCtx());
+    const result = await AssistantModule.handleEvent(makeTextEvent("ค้าง"), makeCtx());
     const msg = firstMessage(result);
     expect(msg.type).toBe("text");
-    expect(msg.text).toContain("ยังไม่มีงานในรายการ");
+    expect(msg.text).toContain("ยังไม่มีงานค้าง");
     expect(msg.quickReply?.items.length).toBe(3);
   });
 });

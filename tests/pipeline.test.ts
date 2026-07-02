@@ -64,6 +64,14 @@ function makeQueryBuilder(table: string) {
       }
       return { data: null, error: null };
     }),
+    // Assistant's Todo path touches upl_todos (insert + select().order()); resolve those
+    // awaited chains to an empty list so "plain text → add" completes without a real store.
+    order: vi.fn(() => builder),
+    in: vi.fn(() => builder),
+    then: (onFulfilled: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) => {
+      const result = table === "upl_todos" ? { data: [], error: null } : { data: null, error: null };
+      return Promise.resolve(result).then(onFulfilled, onRejected);
+    },
   };
 
   return builder;
@@ -273,13 +281,16 @@ describe("routeEvent — router priority order (SYSTEM-DESIGN.md §4.2)", () => 
       broadcast_campaigns: true,
     };
 
-    const event = textEvent("นัดหมาย ประชุมทีมพรุ่งนี้");
-    const ctx = baseCtx();
+    // 1:1 chat (sourceType "user") so the group reply-mode gate passes through and the
+    // text reaches the modules — this test is about priority order, not group gating.
+    const event = textEvent("นัดหมาย ประชุมทีมพรุ่งนี้", { source: { type: "user", userId: "u1" } });
+    const ctx = baseCtx({ sourceType: "user" });
 
     const result = await routeEvent(event, ctx);
 
-    // slip_verification.matchesIntent() is false for non-image events, so the
-    // router proceeds to assistant_productivity per priority order.
+    // slip_verification.matchesIntent() is false for non-image events; broadcast has no
+    // trigger keyword configured, so the router proceeds to assistant_productivity, which
+    // treats the plain text as a todo add.
     expect(result.length).toBeGreaterThan(0);
   });
 });

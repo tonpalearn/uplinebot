@@ -29,8 +29,10 @@ export const MODULE_REGISTRY: Record<string, ModuleHandler> = {
  */
 const ROUTER_PRIORITY: string[] = [
   "slip_verification",
-  "assistant_productivity",
+  // Broadcast trigger keywords (exact-match) get first shot at TEXT so they win over the
+  // Assistant's "any plain text = add a todo" fallback. Assistant is deliberately LAST.
   "broadcast_campaigns",
+  "assistant_productivity",
 ];
 
 async function loadModuleConfig(targetId: string, moduleKey: string): Promise<Record<string, unknown>> {
@@ -50,17 +52,84 @@ async function loadModuleConfig(targetId: string, moduleKey: string): Promise<Re
 }
 
 /**
+ * Group reply-mode gate. In 1:1 chats the bot always responds. In a group/room the bot's
+ * group_reply_mode decides whether a TEXT message is acted on:
+ *   - 'all'          → always respond
+ *   - 'mention_only' → only when the bot itself is @mentioned (the bot's mention is then
+ *                      stripped from the text so the remaining words are the command/task)
+ *   - 'prefix'       → only when the text starts with the bot's default_prefix (stripped)
+ * Non-text events (e.g. a slip image) are never gated — they pass through regardless of mode.
+ *
+ * Returns the (possibly text-cleaned) event to route, or null to stay silent.
+ */
+async function applyReplyGate(event: LineEvent, ctx: TenantContext): Promise<LineEvent | null> {
+  if (ctx.sourceType === "user") return event;
+  if (event.type !== "message" || event.message?.type !== "text") return event;
+
+  const supabase = getServiceClient();
+  const { data: bot } = await supabase
+    .from("upl_bots")
+    .select("group_reply_mode, default_prefix, line_channel_id")
+    .eq("id", ctx.botId)
+    .maybeSingle();
+
+  const mode = (bot?.group_reply_mode as string) ?? "mention_only";
+  if (mode === "all") return event;
+
+  const text = event.message.text ?? "";
+
+  if (mode === "mention_only") {
+    const mentionees = event.message.mention?.mentionees ?? [];
+    const botMentions = mentionees.filter((m) => m.userId && m.userId === bot?.line_channel_id);
+    if (botMentions.length === 0) return null; // bot not mentioned → silent
+    return withText(event, stripMentions(text, botMentions));
+  }
+
+  if (mode === "prefix") {
+    const prefix = ((bot?.default_prefix as string) ?? "").trim();
+    const t = text.trimStart();
+    if (!prefix || !t.startsWith(prefix)) return null;
+    return withText(event, t.slice(prefix.length).trim());
+  }
+
+  return null;
+}
+
+/** Remove the bot's @mention substrings (by index/length, highest first) and trim. */
+function stripMentions(text: string, mentions: Array<{ index?: number; length?: number }>): string {
+  const ranges = mentions
+    .filter((m) => typeof m.index === "number" && typeof m.length === "number")
+    .sort((a, b) => (b.index as number) - (a.index as number));
+  let out = text;
+  for (const m of ranges) {
+    const i = m.index as number;
+    const len = m.length as number;
+    if (i >= 0 && i + len <= out.length) out = out.slice(0, i) + out.slice(i + len);
+  }
+  return out.trim();
+}
+
+/** Shallow-clone an event with a replaced message.text. */
+function withText(event: LineEvent, text: string): LineEvent {
+  return { ...event, message: event.message ? { ...event.message, text } : event.message };
+}
+
+/**
  * Command Router — routeEvent().
  *
+ * 0. Applies the group reply-mode gate (mention_only/prefix/all). Silent if it fails.
  * 1. Filters MODULE_REGISTRY to modules the tenant is entitled to (§4.1 guard),
  *    in the fixed ROUTER_PRIORITY order (Slip Verification first for image messages,
  *    then keyword modules).
  * 2. For each enabled candidate module, calls matchesIntent(); first match wins,
  *    handleEvent() runs and its OutboundMessage[] is returned.
- * 3. If no module matches, returns an empty array (silent) — expected behavior for
- *    groups in 'mention_only' mode, or for any event no purchased module handles.
+ * 3. If no module matches, returns an empty array (silent).
  */
 export async function routeEvent(event: LineEvent, ctx: TenantContext): Promise<OutboundMessage[]> {
+  const gated = await applyReplyGate(event, ctx);
+  if (!gated) return [];
+  event = gated;
+
   for (const moduleKey of ROUTER_PRIORITY) {
     const handler = MODULE_REGISTRY[moduleKey];
     if (!handler) continue;

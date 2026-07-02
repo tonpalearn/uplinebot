@@ -10,6 +10,11 @@ export interface LineEvent {
     id: string;
     type: string; // 'text' | 'image' | 'sticker' | ...
     text?: string;
+    // Present on text messages that @mention someone. Used to enforce a group's
+    // 'mention_only' reply mode (only respond when the bot itself is mentioned).
+    mention?: {
+      mentionees?: Array<{ index?: number; length?: number; userId?: string }>;
+    };
   };
   replyToken?: string;
   source: {

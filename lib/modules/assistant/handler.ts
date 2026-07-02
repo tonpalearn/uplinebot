@@ -9,74 +9,54 @@ import {
   clearDone,
   planLink,
 } from "./todo";
-import { handleCalendarIntent } from "./calendar";
-import { handleNewsIntent } from "./news";
 import { handleMorningBriefJob } from "./morning-brief";
 
 /**
- * Assistant: Todo, Calendar & Morning Brief (module_key: assistant_productivity)
+ * Assistant: Todo & Morning Brief (module_key: assistant_productivity)
  * Per SYSTEM-DESIGN.md §4.2 (ModuleHandler interface) and SPEC.md §6.3.
  *
  * Todo Manager is fully implemented (real CRUD against upl_todos, target-scoped).
- * Calendar Sync, News Digest, and Morning Brief are out of scope for this pass
- * (require real Google OAuth) — they are wired into matchesIntent/handleEvent so the
- * interface is complete, but each returns a clear Thai "not yet connected" stub message
- * (see ./calendar.ts, ./news.ts, ./morning-brief.ts).
+ * UX: a plain text message IS a todo (1 line = 1 task) — no "เพิ่ม" prefix needed. A small
+ * set of command words (ค้าง / ลบ N / เลื่อน / วางแผน / ลบทั้งหมด / ล้างที่เสร็จ) are
+ * recognised first; everything else is added as a task. This module is LAST in
+ * ROUTER_PRIORITY so broadcast trigger keywords still win before text becomes a todo.
+ * Calendar Sync & News Digest remain future work (Google OAuth) and are no longer keyword-
+ * intercepted — those words simply become todos until the real integrations ship.
  */
-
-const CALENDAR_KEYWORDS = /^(นัดหมาย|ปฏิทิน)/i;
-const NEWS_KEYWORDS = /^(ข่าว|สรุปข่าว)/i;
 
 export const AssistantModule: ModuleHandler = {
   key: "assistant_productivity",
 
   matchesIntent(event: LineEvent, _config: ModuleConfig): boolean {
+    // Any non-empty text message is handled by the Todo manager (plain text = add a task).
     if (event.type !== "message" || event.message?.type !== "text") return false;
-    const text = event.message.text ?? "";
-    if (!text.trim()) return false;
-
-    if (parseTodoIntent(text)) return true;
-    if (CALENDAR_KEYWORDS.test(text.trim())) return true;
-    if (NEWS_KEYWORDS.test(text.trim())) return true;
-
-    return false;
+    return !!event.message.text?.trim();
   },
 
   async handleEvent(event: LineEvent, ctx: TenantContext): Promise<OutboundMessage[]> {
     const text = event.message?.text ?? "";
-    const trimmed = text.trim();
 
     const todoIntent = parseTodoIntent(text);
-    if (todoIntent) {
-      switch (todoIntent.action) {
-        case "add":
-          return addTodos(ctx.targetId, todoIntent.items);
-        case "list":
-          return listTodos(ctx.targetId);
-        case "done":
-          return completeTodos(ctx.targetId, todoIntent.indexes);
-        case "delete":
-          return deleteTodos(ctx.targetId, { indexes: todoIntent.indexes });
-        case "delete_all":
-          return deleteTodos(ctx.targetId, { all: true });
-        case "reschedule":
-          return rescheduleTodo(ctx.targetId, todoIntent.index, todoIntent.whenText);
-        case "clear_done":
-          return clearDone(ctx.targetId);
-        case "plan":
-          return planLink(ctx.targetId);
-      }
-    }
+    if (!todoIntent) return [];
 
-    if (CALENDAR_KEYWORDS.test(trimmed)) {
-      return handleCalendarIntent();
+    switch (todoIntent.action) {
+      case "add":
+        return addTodos(ctx.targetId, todoIntent.items);
+      case "list":
+        return listTodos(ctx.targetId);
+      case "done":
+        return completeTodos(ctx.targetId, todoIntent.indexes);
+      case "delete":
+        return deleteTodos(ctx.targetId, { indexes: todoIntent.indexes });
+      case "delete_all":
+        return deleteTodos(ctx.targetId, { all: true });
+      case "reschedule":
+        return rescheduleTodo(ctx.targetId, todoIntent.index, todoIntent.whenText);
+      case "clear_done":
+        return clearDone(ctx.targetId);
+      case "plan":
+        return planLink(ctx.targetId);
     }
-
-    if (NEWS_KEYWORDS.test(trimmed)) {
-      return handleNewsIntent();
-    }
-
-    return [];
   },
 
   async handleScheduledJob(job: ScheduledJob, ctx: TenantContext): Promise<OutboundMessage[]> {

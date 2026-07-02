@@ -42,7 +42,7 @@ const DEFAULT_TITLE = "📋 รายการงาน";
 export function todoQuickReply(): { items: QuickReplyItem[] } {
   return {
     items: [
-      { type: "action", action: { type: "message", label: "📋 งานวันนี้", text: "งานวันนี้" } },
+      { type: "action", action: { type: "message", label: "📋 งานค้าง", text: "ค้าง" } },
       { type: "action", action: { type: "message", label: "🗓️ วางแผน", text: "วางแผน" } },
       { type: "action", action: { type: "message", label: "🧹 ล้างที่เสร็จ", text: "ล้างที่เสร็จ" } },
     ],

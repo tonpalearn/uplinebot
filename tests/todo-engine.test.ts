@@ -248,20 +248,20 @@ describe("(1) parseTodoIntent", () => {
     });
   });
 
-  it("งานวันนี้ / รายการ / list / todo → list", () => {
-    for (const kw of ["งานวันนี้", "รายการ", "list", "todo"]) {
+  it("ค้าง (primary) + งานวันนี้ / รายการ / list / todo → list", () => {
+    for (const kw of ["ค้าง", "งานค้าง", "ดูงาน", "งานวันนี้", "รายการ", "list", "todo"]) {
       expect(parseTodoIntent(kw)).toEqual({ action: "list" });
     }
   });
 
-  it("เสร็จ N (single and multiple numbers) → done with indexes", () => {
+  it("ปิดงาน: ลบ N / เสร็จ N (single and multiple) → done with indexes", () => {
+    expect(parseTodoIntent("ลบ 1")).toEqual({ action: "done", indexes: [1] });
+    expect(parseTodoIntent("ลบ 2 4")).toEqual({ action: "done", indexes: [2, 4] });
     expect(parseTodoIntent("เสร็จ 2")).toEqual({ action: "done", indexes: [2] });
     expect(parseTodoIntent("เสร็จ 1 3 5")).toEqual({ action: "done", indexes: [1, 3, 5] });
   });
 
-  it("ลบ N → delete with indexes; ลบทั้งหมด → delete_all", () => {
-    expect(parseTodoIntent("ลบ 1")).toEqual({ action: "delete", indexes: [1] });
-    expect(parseTodoIntent("ลบ 2 4")).toEqual({ action: "delete", indexes: [2, 4] });
+  it("ลบทั้งหมด → delete_all", () => {
     expect(parseTodoIntent("ลบทั้งหมด")).toEqual({ action: "delete_all" });
   });
 
@@ -283,9 +283,14 @@ describe("(1) parseTodoIntent", () => {
     }
   });
 
-  it("unrelated text → null (no false match)", () => {
-    expect(parseTodoIntent("สวัสดีครับวันนี้อากาศดีมาก")).toBeNull();
+  it("plain text (no prefix) → add each line as a task; empty → null", () => {
+    expect(parseTodoIntent("ซื้อของที่ตลาด")).toEqual({ action: "add", items: ["ซื้อของที่ตลาด"] });
+    expect(parseTodoIntent("โทรหาลูกค้า\nส่งเอกสาร")).toEqual({
+      action: "add",
+      items: ["โทรหาลูกค้า", "ส่งเอกสาร"],
+    });
     expect(parseTodoIntent("")).toBeNull();
+    expect(parseTodoIntent("   ")).toBeNull();
   });
 });
 
@@ -345,7 +350,7 @@ describe("(3) listTodos → Flex message", () => {
     expect(msg.quickReply).toBeDefined();
     expect(msg.quickReply!.items).toHaveLength(3);
     expect(msg.quickReply!.items.map((i) => i.action.text)).toEqual([
-      "งานวันนี้",
+      "ค้าง",
       "วางแผน",
       "ล้างที่เสร็จ",
     ]);
@@ -426,12 +431,18 @@ describe("(4) addTodos due_at persistence", () => {
 // ══════════════════════════════════════════════════════════════════════════════════════════
 
 describe("engine mutations round-trip through the store", () => {
-  it("completeTodos marks the referenced visible numbers done", async () => {
+  it("completeTodos (ปิดงาน) marks the visible number done and hides it from the list", async () => {
     await addTodos(TARGET_ID, ["งานหนึ่ง", "งานสอง", "งานสาม"], NOW);
 
     const result = await completeTodos(TARGET_ID, [2], NOW);
-    expect(result[0].type).toBe("flex");
-    expect(flexText(result)).toContain("✅ งานสอง");
+    // Reply = a confirmation text + the refreshed OPEN-only Flex list (done tasks hidden).
+    expect(result[0].type).toBe("text");
+    expect(result[0].text).toContain("ปิดงาน");
+
+    const listText = flexText(result);
+    expect(listText).toContain("งานหนึ่ง");
+    expect(listText).toContain("งานสาม");
+    expect(listText).not.toContain("งานสอง"); // done → hidden from ค้าง list
 
     const rows = store.filter((r) => r.target_id === TARGET_ID);
     expect(rows.find((r) => r.content === "งานสอง")?.done).toBe(true);
@@ -466,7 +477,7 @@ describe("engine mutations round-trip through the store", () => {
     const result = await deleteTodos(TARGET_ID, { all: true }, NOW);
     // Empty list → plain-text prompt (not Flex), still with a Quick Reply.
     expect(result[0].type).toBe("text");
-    expect(result[0].text).toContain("ยังไม่มีงานในรายการ");
+    expect(result[0].text).toContain("ยังไม่มีงานค้าง");
     expect(result[0].quickReply?.items).toHaveLength(3);
 
     expect(store.filter((r) => r.target_id === TARGET_ID)).toHaveLength(0);
