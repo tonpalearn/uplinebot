@@ -9,7 +9,8 @@ import { NextRequest } from "next/server";
  * The handler must:
  *   1. Resolve which bot/tenant that destination belongs to (upl_bots.line_channel_id).
  *   2. Verify X-Line-Signature against THAT bot's OWN channel secret (per-channel HMAC).
- *   3. Reject when the destination matches no bot (404) or the signature is wrong (401).
+ *   3. Always return HTTP 200 (LINE requirement), but NOT process events when the
+ *      destination matches no bot or the signature is wrong (no side effects on forgery).
  *
  * We stand up TWO bots in a fake `upl_bots` table (A -> tenant TA, B -> tenant TB), each
  * with its own encrypted channel secret + access token, and compute a REAL HMAC-SHA256
@@ -208,28 +209,29 @@ describe("POST /api/line/webhook — multi-tenant routing by destination + per-c
     expect(replyMessageMock.mock.calls[0][0]).toBe(BOT_A.access_token);
   });
 
-  it("(2) destination A + signature computed with the WRONG secret -> 401 invalid_signature", async () => {
+  it("(2) destination A + signature computed with the WRONG secret -> 200 but NOT processed (forgery rejected)", async () => {
     const raw = webhookBody(BOT_A.line_channel_id);
     // Sign with bot B's secret (or any wrong secret) against a body destined for A.
     const res = await POST(makeRequest(raw, sign(raw, BOT_B.channel_secret)));
 
-    expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ ok: false, reason: "invalid_signature" });
+    // LINE requires 200 on every request, but the forged event must NOT be processed.
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
 
-    // Rejected before any routing / reply happened.
+    // Security property preserved: no routing / reply / side effects for a bad signature.
     expect(routeEventMock).not.toHaveBeenCalled();
     expect(replyMessageMock).not.toHaveBeenCalled();
   });
 
-  it("(3) destination matching no bot -> 404 unknown_bot", async () => {
+  it("(3) destination matching no bot (e.g. LINE Verify before onboarding) -> 200 but NOT processed", async () => {
     const raw = webhookBody("Uno-such-destination");
-    // Even a signature that is 'valid' for some secret cannot save an unknown destination,
-    // because the bot (and thus the secret to verify against) can't be resolved at all.
     const res = await POST(makeRequest(raw, sign(raw, "whatever-secret")));
 
-    expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ ok: false, reason: "unknown_bot" });
+    // 200 so LINE's Verify button passes even before the bot is onboarded.
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
 
+    // The lookup still ran against the destination, but nothing was processed.
     expect(channelIdLookups).toContain("Uno-such-destination");
     expect(routeEventMock).not.toHaveBeenCalled();
     expect(replyMessageMock).not.toHaveBeenCalled();
@@ -254,13 +256,14 @@ describe("POST /api/line/webhook — multi-tenant routing by destination + per-c
     expect(replyMessageMock.mock.calls[0][0]).toBe(BOT_B.access_token);
   });
 
-  it("(bonus) a signature valid for bot A but sent to destination B is rejected 401 (secrets are not interchangeable)", async () => {
+  it("(bonus) a signature valid for bot A but sent to destination B -> 200 but NOT processed (secrets are not interchangeable)", async () => {
     const raw = webhookBody(BOT_B.line_channel_id);
     // Correctly-formed HMAC, but with the WRONG tenant's secret.
     const res = await POST(makeRequest(raw, sign(raw, BOT_A.channel_secret)));
 
-    expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ ok: false, reason: "invalid_signature" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    // Cross-tenant secret must not verify → event not processed.
     expect(routeEventMock).not.toHaveBeenCalled();
   });
 });
