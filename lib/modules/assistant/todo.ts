@@ -1,6 +1,6 @@
 import { getServiceClient } from "../../db";
 import type { OutboundMessage } from "../types";
-import { parseThaiDateTime, formatThaiDueAt } from "./datetime";
+import { parseThaiDateTime, formatThaiDueAt, bkkDueDefault } from "./datetime";
 import { buildTodoListFlex, buildTodoListText, todoQuickReply, type TodoListItem } from "./flex";
 import { getOrCreatePlanToken, planLinkUrl } from "../../plan-token";
 
@@ -139,11 +139,19 @@ export async function addTodos(
     ];
   }
 
-  const rows = parsed.map((p) => ({
-    target_id: targetId,
-    content: p.content,
-    due_at: p.dueAt ? p.dueAt.toISOString() : null,
-  }));
+  const rows = parsed.map((p) => {
+    // "พิมพ์เฉย ๆ = วันนี้": a task with no date/time defaults to TODAY (09:00 Bangkok) so it
+    // groups under today. Such defaulted tasks do NOT arm a reminder (marked pre-reminded) — a
+    // reminder only fires when the user gave an explicit date/time. Explicit tasks are unchanged.
+    const explicit = p.dueAt !== null;
+    const due = p.dueAt ?? bkkDueDefault(now);
+    return {
+      target_id: targetId,
+      content: p.content,
+      due_at: due.toISOString(),
+      reminded_at: explicit ? null : now.toISOString(),
+    };
+  });
 
   const { error } = await supabase.from("upl_todos").insert(rows);
   if (error) {

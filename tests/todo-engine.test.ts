@@ -422,24 +422,25 @@ describe("(4) addTodos due_at persistence", () => {
     expect(rows[0].due_at).toBe("2026-07-03T07:00:00.000Z");
   });
 
-  it("adding a task WITHOUT a date stores due_at = null", async () => {
+  it("a task WITHOUT a date defaults due_at to TODAY 09:00 Bangkok (พิมพ์เฉย ๆ = วันนี้)", async () => {
     await addTodos(TARGET_ID, ["ซื้อของที่ตลาด"], NOW);
 
     const rows = store.filter((r) => r.target_id === TARGET_ID);
     expect(rows).toHaveLength(1);
     expect(rows[0].content).toBe("ซื้อของที่ตลาด");
-    expect(rows[0].due_at).toBeNull();
+    // NOW's Bangkok "today" is 2026-07-02; 09:00 BKK == 02:00 UTC.
+    expect(rows[0].due_at).toBe("2026-07-02T02:00:00.000Z");
   });
 
-  it("a multi-line add mixes dated and undated rows correctly", async () => {
+  it("a multi-line add mixes explicit-dated and default-today rows correctly", async () => {
     await addTodos(TARGET_ID, ["จ่ายบิล พรุ่งนี้ 14:00", "เดินเล่น"], NOW);
 
     const rows = store.filter((r) => r.target_id === TARGET_ID);
     expect(rows).toHaveLength(2);
     const bill = rows.find((r) => r.content === "จ่ายบิล");
     const walk = rows.find((r) => r.content === "เดินเล่น");
-    expect(bill?.due_at).toBe("2026-07-03T07:00:00.000Z");
-    expect(walk?.due_at).toBeNull();
+    expect(bill?.due_at).toBe("2026-07-03T07:00:00.000Z"); // explicit พรุ่งนี้ 14:00
+    expect(walk?.due_at).toBe("2026-07-02T02:00:00.000Z"); // no date → today 09:00
   });
 });
 

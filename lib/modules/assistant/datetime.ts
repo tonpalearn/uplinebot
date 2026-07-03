@@ -236,6 +236,14 @@ function stripTokens(text: string, tokens: string[]): string {
   return out;
 }
 
+/**
+ * Absolute instant for TODAY (Asia/Bangkok) at the given time (default 09:00) — used as the
+ * default due date for a task added with NO explicit date/time ("พิมพ์เฉย ๆ = วันนี้").
+ */
+export function bkkDueDefault(now: Date, hour = 9, minute = 0): Date {
+  return bkkInstant(bkkToday(now), hour, minute);
+}
+
 export function parseThaiDateTime(text: string, now: Date): ParsedThaiDateTime {
   const original = (text ?? "").trim();
   if (!original) return { dueAt: null, cleanedText: original };
