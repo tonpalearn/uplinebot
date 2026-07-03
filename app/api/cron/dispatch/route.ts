@@ -4,6 +4,9 @@ import { scanTodoReminders } from "@/lib/reminders";
 
 // Never prerender/cache — invoked on a schedule and must run live per request.
 export const dynamic = "force-dynamic";
+// Allow the dispatch to run longer when there's a burst of due reminders. Vercel Hobby caps
+// this at ~10s regardless; on Pro it lets the parallel reminder batch finish comfortably.
+export const maxDuration = 60;
 
 /**
  * GET /api/cron/dispatch

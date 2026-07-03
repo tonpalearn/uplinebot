@@ -14,7 +14,12 @@ import type { OutboundMessage } from "./modules/types";
  * from lib/scheduler/dispatcher.ts. A failure on one row is caught so the batch continues.
  */
 
-const BATCH_LIMIT = 200;
+// Max reminders processed per cron tick. Anything beyond this drains on the next minute's
+// tick (their reminded_at is still null), so nothing is lost — a big burst just spreads out.
+const BATCH_LIMIT = 300;
+// How many LINE pushes run concurrently. Keeps the whole batch well under the serverless
+// function time limit while not hammering the LINE API with hundreds of parallel calls.
+const PUSH_CONCURRENCY = 25;
 
 interface DueTodoRow {
   id: string;
@@ -55,43 +60,64 @@ export async function scanTodoReminders(now: Date = new Date()): Promise<Reminde
   const targetCache = new Map<string, TargetInfo | null>();
   const botTokenCache = new Map<string, string | null>();
 
+  // Phase 1 — warm the per-target + per-bot caches (only unique targets/bots are fetched).
   for (const row of rows) {
-    try {
-      const target = await resolveTarget(row.target_id, targetCache);
-      if (!target) continue;
+    const target = await resolveTarget(row.target_id, targetCache);
+    if (target) await resolveBotToken(target.botId, botTokenCache);
+  }
 
-      const accessToken = await resolveBotToken(target.botId, botTokenCache);
-      if (!accessToken) continue;
-
-      const messages: OutboundMessage[] = [
-        {
-          type: "text",
-          text: `⏰ ถึงเวลางาน: ${row.content} (กำหนด ${formatThaiDueAt(new Date(row.due_at), now)})`,
-        },
-      ];
-
-      await pushMessage(accessToken, target.lineSourceId, messages);
-
-      const { error: updateError } = await supabase
-        .from("upl_todos")
-        .update({ reminded_at: now.toISOString() })
-        .eq("id", row.id);
-
-      if (updateError) {
-        // Push already went out; log and move on rather than aborting the batch.
-        console.error(`Reminder sent but failed to stamp reminded_at for todo ${row.id}: ${updateError.message}`);
-        continue;
-      }
-
-      result.sent += 1;
-    } catch (err) {
-      console.error(
-        `Todo reminder failed for todo ${row.id}: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
+  // Phase 2 — push + stamp reminded_at in PARALLEL chunks so hundreds of reminders due at the
+  // same minute (across many customers) go out in a few seconds instead of one-by-one. Each
+  // reminder stays scoped to its own target_id/bot, so customers never cross-contaminate.
+  for (let i = 0; i < rows.length; i += PUSH_CONCURRENCY) {
+    const chunk = rows.slice(i, i + PUSH_CONCURRENCY);
+    const outcomes = await Promise.all(
+      chunk.map((row) => remindOne(row, now, targetCache, botTokenCache))
+    );
+    result.sent += outcomes.filter(Boolean).length;
   }
 
   return result;
+}
+
+/** Send one reminder (its target/bot are already in the caches) and stamp reminded_at. */
+async function remindOne(
+  row: DueTodoRow,
+  now: Date,
+  targetCache: Map<string, TargetInfo | null>,
+  botTokenCache: Map<string, string | null>
+): Promise<boolean> {
+  try {
+    const target = targetCache.get(row.target_id);
+    if (!target) return false;
+
+    const accessToken = botTokenCache.get(target.botId);
+    if (!accessToken) return false;
+
+    const messages: OutboundMessage[] = [
+      {
+        type: "text",
+        text: `⏰ ถึงเวลางาน: ${row.content} (กำหนด ${formatThaiDueAt(new Date(row.due_at), now)})`,
+      },
+    ];
+
+    await pushMessage(accessToken, target.lineSourceId, messages);
+
+    const { error: updateError } = await getServiceClient()
+      .from("upl_todos")
+      .update({ reminded_at: now.toISOString() })
+      .eq("id", row.id);
+
+    if (updateError) {
+      // Push already went out; log and move on rather than failing the batch.
+      console.error(`Reminder sent but failed to stamp reminded_at for todo ${row.id}: ${updateError.message}`);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error(`Todo reminder failed for todo ${row.id}: ${err instanceof Error ? err.message : String(err)}`);
+    return false;
+  }
 }
 
 async function resolveTarget(

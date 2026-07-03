@@ -35,5 +35,8 @@ npm run dev
 ---
 Spec + system design เต็ม: เก็บแยกนอก repo นี้ (SPEC.md / SYSTEM-DESIGN.md)
 
-⏰ **ตัวตั้งเวลา / การเตือนตามเวลา (Cron):** บน Vercel Hobby ยิงได้วันละครั้ง จึงใช้ GitHub Actions
-ยิง `/api/cron/dispatch` ทุก 5 นาทีแทน — วิธีเปิดใช้ + ทางเลือก + ทางอัปเกรด Pro อยู่ใน [`docs/CRON.md`](docs/CRON.md)
+⏰ **ตัวตั้งเวลา / การเตือนตามเวลา (Cron) — ใช้ pg_cron เป็นหลัก:** Vercel Hobby ยิง cron ได้แค่วันละครั้ง
+จึงใช้ **pg_cron ใน Supabase** (job `upline-cron-dispatch`, ทุก 1 นาที) → `net.http_get` ยิง `/api/cron/dispatch`
+พร้อม `Authorization: Bearer $CRON_SECRET` เชื่อถือได้ ±1 นาที · การส่ง reminder ทำแบบ **parallel** (25/รอบ, สูงสุด
+300 งาน/รอบ) รองรับหลายลูกค้าตั้งเวลาพร้อมกัน · ทางเลือก/อัปเกรด Pro ดู [`docs/CRON.md`](docs/CRON.md)
+> GitHub Actions cron เดิม = fallback (ไม่เสถียร throttle เป็น ชม.) แนะนำปิดใน Actions UI
