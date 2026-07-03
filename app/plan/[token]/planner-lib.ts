@@ -11,24 +11,25 @@
 
 export const BKK_OFFSET_MS = 7 * 60 * 60 * 1000;
 
-// Palette lifted from public/guide.html so the planner matches the marketing/guide surface.
+// Theme tokens — resolve against globals.css so the planner flips light/dark with the app.
 export const T = {
-  bg: "#0a0e17",
-  panel: "rgba(255,255,255,.04)",
-  panel2: "rgba(255,255,255,.06)",
-  border: "rgba(255,255,255,.09)",
-  border2: "rgba(120,190,255,.25)",
-  text: "#e6ecf5",
-  muted: "#8b99ad",
-  dim: "#6b7789",
-  blue: "#4da3ff",
-  green: "#37e2b0",
-  purple: "#c084fc",
-  gold: "#f2c14e",
-  danger: "#ff6b7d",
+  bg: "var(--bg)",
+  panel: "var(--surface)",
+  panel2: "var(--surface-2)",
+  border: "var(--border)",
+  border2: "var(--border-strong)",
+  text: "var(--fg)",
+  muted: "var(--muted)",
+  dim: "var(--muted-2)",
+  blue: "var(--primary)",
+  green: "var(--success)",
+  purple: "var(--accent)",
+  gold: "var(--gold)",
+  danger: "var(--danger)",
+  onAccent: "var(--primary-fg)", // text/icon color on any accent-colored surface
 } as const;
 
-export const FONT = "'IBM Plex Sans Thai', system-ui, sans-serif";
+export const FONT = "var(--font-sans)";
 export const MONO = "'JetBrains Mono', ui-monospace, monospace";
 
 export interface Todo {

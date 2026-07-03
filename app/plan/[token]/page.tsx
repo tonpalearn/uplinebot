@@ -705,7 +705,7 @@ function TaskRow({
           ...sx.check,
           background: todo.done ? T.green : "transparent",
           borderColor: todo.done ? T.green : T.border2,
-          color: "#08210f",
+          color: T.onAccent,
         }}
         aria-label={todo.done ? "ทำเป็นยังไม่เสร็จ" : "ทำเป็นเสร็จแล้ว"}
         title={todo.done ? "ทำเป็นยังไม่เสร็จ" : "ทำเป็นเสร็จแล้ว"}
@@ -900,11 +900,11 @@ function GlobalStyle() {
         html,body{margin:0;padding:0;background:${T.bg};}
         *{box-sizing:border-box;}
         .plan-scope input[type="datetime-local"]{
-          color-scheme:dark;font-family:${FONT};
+          color-scheme:light dark;font-family:${FONT};
         }
         .plan-scope input::placeholder{color:${T.dim};}
         .plan-scope ::-webkit-scrollbar{width:9px;height:9px;}
-        .plan-scope ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:8px;}
+        .plan-scope ::-webkit-scrollbar-thumb{background:${T.border2};border-radius:8px;}
         .plan-scope ::-webkit-scrollbar-track{background:transparent;}
         .plan-day-cell:hover{filter:brightness(1.25);}
       `,
@@ -1019,7 +1019,7 @@ const sx: Record<string, React.CSSProperties> = {
     fontFamily: FONT,
     fontSize: 14,
     fontWeight: 700,
-    color: "#08210f",
+    color: T.onAccent,
     background: `linear-gradient(90deg, ${T.blue}, ${T.green})`,
     border: "none",
     borderRadius: 10,
@@ -1248,7 +1248,7 @@ const sx: Record<string, React.CSSProperties> = {
     fontFamily: FONT,
     fontSize: 12.5,
     fontWeight: 700,
-    color: "#08210f",
+    color: T.onAccent,
     background: T.green,
     border: "none",
     borderRadius: 8,

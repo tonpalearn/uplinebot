@@ -6,19 +6,18 @@
 import type { CSSProperties, ReactNode } from "react";
 
 export const COLORS = {
-  pageBg: "#0a0e17",
-  cardBg: "#0f1420",
-  border: "rgba(255,255,255,0.08)",
-  textMain: "#eef1f7",
-  textMuted: "#8b93a7",
-  blue: "#4da3ff",
-  green: "#37e2b0",
-  gold: "#f2c14e",
-  danger: "#ff6b6b",
+  pageBg: "var(--bg)",
+  cardBg: "var(--surface)",
+  border: "var(--border)",
+  textMain: "var(--fg)",
+  textMuted: "var(--muted)",
+  blue: "var(--primary)",
+  green: "var(--success)",
+  gold: "var(--gold)",
+  danger: "var(--danger)",
 } as const;
 
-export const FONT =
-  "'IBM Plex Sans Thai', 'Noto Sans Thai', system-ui, sans-serif";
+export const FONT = "var(--font-sans)";
 
 // A glass panel used for each wizard step.
 export function Panel({
@@ -36,9 +35,9 @@ export function Panel({
         borderRadius: 16,
         padding: 24,
         background: COLORS.cardBg,
-        border: `1px solid ${active ? "rgba(77,163,255,0.35)" : COLORS.border}`,
+        border: `1px solid ${active ? "var(--primary)" : COLORS.border}`,
         boxShadow: active
-          ? "0 0 0 1px rgba(77,163,255,0.18), 0 8px 24px rgba(0,0,0,0.35)"
+          ? "0 0 0 1px var(--primary-weak), 0 8px 24px rgba(0,0,0,0.35)"
           : "0 4px 16px rgba(0,0,0,0.25)",
         opacity: active === false ? 0.55 : 1,
         transition: "opacity .2s, border-color .2s",
@@ -74,8 +73,8 @@ export function StepHeader({
           placeItems: "center",
           fontSize: 14,
           fontWeight: 700,
-          background: done ? COLORS.green : "rgba(77,163,255,0.15)",
-          color: done ? "#0a0e17" : COLORS.blue,
+          background: done ? COLORS.green : "var(--primary-weak)",
+          color: done ? "var(--primary-fg)" : COLORS.blue,
           border: done ? "none" : `1px solid ${COLORS.blue}`,
         }}
       >
@@ -123,7 +122,7 @@ const fieldStyle: CSSProperties = {
   padding: "10px 12px",
   borderRadius: 10,
   border: `1px solid ${COLORS.border}`,
-  background: "rgba(255,255,255,0.04)",
+  background: "var(--surface-2)",
   color: COLORS.textMain,
   fontFamily: FONT,
   fontSize: 14,
@@ -156,8 +155,8 @@ export function Button({
 }) {
   const disabled = rest.disabled;
   const bg =
-    variant === "gold" ? COLORS.gold : variant === "ghost" ? "rgba(255,255,255,0.06)" : COLORS.blue;
-  const fg = variant === "ghost" ? COLORS.textMain : "#0a0e17";
+    variant === "gold" ? COLORS.gold : variant === "ghost" ? "var(--surface-2)" : COLORS.blue;
+  const fg = variant === "ghost" ? COLORS.textMain : "var(--primary-fg)";
   return (
     <button
       {...rest}
@@ -183,9 +182,9 @@ export function Button({
 // Inline status / error banner.
 export function Banner({ kind, children }: { kind: "error" | "success" | "info"; children: ReactNode }) {
   const map = {
-    error: { c: COLORS.danger, bg: "rgba(255,107,107,0.1)" },
-    success: { c: COLORS.green, bg: "rgba(55,226,176,0.1)" },
-    info: { c: COLORS.blue, bg: "rgba(77,163,255,0.1)" },
+    error: { c: COLORS.danger, bg: "var(--danger-weak)" },
+    success: { c: COLORS.green, bg: "var(--success-weak)" },
+    info: { c: COLORS.blue, bg: "var(--primary-weak)" },
   }[kind];
   return (
     <div

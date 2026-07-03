@@ -13,13 +13,13 @@ export interface ModuleCatalogItem {
 const HIGHLIGHT_KEY = "slip_verification";
 
 const COLORS = {
-  bg: "#0f1420",
-  border: "rgba(255,255,255,0.08)",
-  gold: "#f2c14e",
-  blue: "#4da3ff",
-  green: "#37e2b0",
-  textMuted: "#8b93a7",
-  textMain: "#eef1f7",
+  bg: "var(--surface)",
+  border: "var(--border)",
+  gold: "var(--gold)",
+  blue: "var(--primary)",
+  green: "var(--success)",
+  textMuted: "var(--muted)",
+  textMain: "var(--fg)",
 };
 
 /**
@@ -54,7 +54,7 @@ export default function ModuleCatalogCard({ module }: { module: ModuleCatalogIte
             top: -10,
             right: 16,
             background: COLORS.gold,
-            color: "#0a0e17",
+            color: "var(--primary-fg)",
             fontSize: 11,
             fontWeight: 700,
             padding: "3px 10px",

@@ -355,7 +355,7 @@ export default function OnboardingPage() {
                           fontFamily: FONT,
                           cursor: "pointer",
                           textTransform: "capitalize",
-                          background: on ? "rgba(77,163,255,0.15)" : "rgba(255,255,255,0.04)",
+                          background: on ? "var(--primary-weak)" : "var(--surface-2)",
                           color: on ? COLORS.blue : COLORS.textMuted,
                           border: `1px solid ${on ? COLORS.blue : COLORS.border}`,
                         }}
@@ -388,7 +388,7 @@ export default function OnboardingPage() {
                           padding: "10px 12px",
                           borderRadius: 10,
                           cursor: m.is_core ? "default" : "pointer",
-                          background: "rgba(255,255,255,0.03)",
+                          background: "var(--surface-2)",
                           border: `1px solid ${highlight ? COLORS.gold + "66" : COLORS.border}`,
                         }}
                       >
@@ -415,7 +415,7 @@ export default function OnboardingPage() {
                                   fontSize: 10,
                                   fontWeight: 700,
                                   background: COLORS.gold,
-                                  color: "#0a0e17",
+                                  color: "var(--primary-fg)",
                                   padding: "2px 7px",
                                   borderRadius: 999,
                                 }}
@@ -570,7 +570,7 @@ export default function OnboardingPage() {
                       minWidth: 0,
                       padding: "11px 12px",
                       borderRadius: 10,
-                      background: "rgba(77,163,255,0.08)",
+                      background: "var(--primary-weak)",
                       border: `1px solid ${COLORS.blue}55`,
                       color: COLORS.textMain,
                       fontSize: 13,
@@ -601,7 +601,7 @@ export default function OnboardingPage() {
                           fontSize: 13,
                           fontWeight: 600,
                           color: COLORS.green,
-                          background: "rgba(55,226,176,0.1)",
+                          background: "var(--success-weak)",
                           border: `1px solid ${COLORS.green}44`,
                           borderRadius: 999,
                           padding: "5px 12px",

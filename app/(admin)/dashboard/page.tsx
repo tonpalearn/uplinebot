@@ -11,11 +11,11 @@ import ModuleCatalogCard, {
 } from "./components/ModuleCatalogCard";
 
 const COLORS = {
-  pageBg: "#0a0e17",
-  textMain: "#eef1f7",
-  textMuted: "#8b93a7",
-  blue: "#4da3ff",
-  green: "#37e2b0",
+  pageBg: "var(--bg)",
+  textMain: "var(--fg)",
+  textMuted: "var(--muted)",
+  blue: "var(--primary)",
+  green: "var(--success)",
 };
 
 export default function DashboardPage() {
@@ -60,8 +60,7 @@ export default function DashboardPage() {
       style={{
         minHeight: "100vh",
         background: COLORS.pageBg,
-        fontFamily:
-          "'IBM Plex Sans Thai', 'Noto Sans Thai', system-ui, sans-serif",
+        fontFamily: "var(--font-sans)",
         color: COLORS.textMain,
         padding: "32px 24px 64px",
       }}
@@ -85,8 +84,8 @@ export default function DashboardPage() {
                 style={{
                   padding: "10px 18px",
                   borderRadius: 10,
-                  background: "rgba(255,255,255,0.06)",
-                  border: `1px solid rgba(255,255,255,0.12)`,
+                  background: "var(--surface-2)",
+                  border: `1px solid var(--border)`,
                   color: COLORS.textMain,
                   fontWeight: 700,
                   fontSize: 14,
@@ -101,8 +100,8 @@ export default function DashboardPage() {
                 style={{
                   padding: "10px 18px",
                   borderRadius: 10,
-                  background: "rgba(255,255,255,0.06)",
-                  border: `1px solid rgba(255,255,255,0.12)`,
+                  background: "var(--surface-2)",
+                  border: `1px solid var(--border)`,
                   color: COLORS.textMain,
                   fontWeight: 700,
                   fontSize: 14,
@@ -118,7 +117,7 @@ export default function DashboardPage() {
                   padding: "10px 18px",
                   borderRadius: 10,
                   background: COLORS.blue,
-                  color: "#0a0e17",
+                  color: "var(--primary-fg)",
                   fontWeight: 700,
                   fontSize: 14,
                   textDecoration: "none",
