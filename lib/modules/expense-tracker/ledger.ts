@@ -163,6 +163,61 @@ export async function deleteLast(targetId: string): Promise<LedgerRow | null> {
   return row;
 }
 
+/**
+ * เปลี่ยนหมวดของรายการเดียว (recategorize) — scope ด้วย (id, target_id) เสมอ.
+ * ถ้า `learn` และรายการมี item ใช้ได้ (raw_text) → upsert คำนั้นลง upl_ledger_category_map
+ * (keyword=raw_text, kind, category=newCategory) เพื่อให้ item เดียวกันครั้งหน้าเข้าหมวดนี้เอง
+ * (EunJod "เรียนรู้หมวด"). คืนแถวที่อัปเดตแล้ว หรือ null ถ้าไม่พบ (ไม่ใช่ของ target นี้/ถูกลบ).
+ */
+export async function recategorize(
+  targetId: string,
+  entryId: string,
+  newCategory: string,
+  learn: boolean
+): Promise<LedgerRow | null> {
+  const category = (newCategory ?? "").trim();
+  if (!category) return null;
+
+  const supabase = getServiceClient();
+
+  // อัปเดตเฉพาะแถวที่เป็นของ target นี้ และยังไม่ถูกลบ — คืนแถวเต็มเพื่อรู้ kind/raw_text
+  const { data, error } = await supabase
+    .from("upl_ledger_entries")
+    .update({ category })
+    .eq("id", entryId)
+    .eq("target_id", targetId)
+    .is("deleted_at", null)
+    .select(ENTRY_COLUMNS)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to recategorize entry ${entryId} for target ${targetId}: ${error.message}`);
+  }
+  if (!data) return null; // ไม่พบ (id ผิด / ไม่ใช่ target นี้ / ถูกลบไปแล้ว)
+
+  const row = data as unknown as LedgerRow;
+
+  // เรียนรู้: จำ item→หมวดนี้ ไว้ใช้ครั้งหน้า (ต่อ target + kind). ต้องมี raw_text ที่ใช้ได้.
+  if (learn) {
+    const keyword = normalize(row.raw_text ?? "");
+    if (keyword.length >= 2) {
+      const { error: mapErr } = await supabase
+        .from("upl_ledger_category_map")
+        .upsert(
+          { target_id: targetId, keyword, kind: row.kind, category },
+          { onConflict: "target_id,keyword,kind" }
+        );
+      if (mapErr) {
+        throw new Error(
+          `Failed to learn keyword "${keyword}"→"${category}" for target ${targetId}: ${mapErr.message}`
+        );
+      }
+    }
+  }
+
+  return row;
+}
+
 /** occurred_on asc, created_at asc (deterministic tiebreak) — matches getEntries ordering. */
 function sortEntries(rows: LedgerRow[]): LedgerRow[] {
   return rows.slice().sort((a, b) => {

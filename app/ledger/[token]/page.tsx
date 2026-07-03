@@ -9,9 +9,14 @@
 // flips light/dark and scales with the app's font control. The per-category bar palette is a
 // small fixed set (bars need distinct hues regardless of theme).
 //
-// Layout: header + period toggle (วัน/สัปดาห์/เดือน) → 3 summary cards (รายรับ/รายจ่าย/คงเหลือ)
-// → category bar chart (expenses, CSS-width bars) → transaction list (date, item, category chip,
-// signed amount, delete ✕). Self-contained: no external chart libs.
+// Two views (view toggle): "list" = simple itemized list of the period (no charts) · "report" =
+// the professional view (summary cards + category bar chart + list). BOTH views' rows carry a
+// category <select> (recategorize via PATCH) + a "จำไว้" checkbox (learn:true so future same-item
+// entries auto-categorize), plus the existing delete ✕. A collapsible "⚙️ จัดการหมวด" panel
+// adds/hides/edits/deletes categories via /api/ledger/<token>/categories.
+//
+// Layout: header + view toggle (รายการ/รายงาน) + period toggle (วัน/สัปดาห์/เดือน) → manage panel
+// → [list view] tx list  OR  [report view] summary cards + bar chart + tx list. No external libs.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { T } from "../../ui-theme";
@@ -38,7 +43,22 @@ interface Summary {
   byCat: { category: string; amount: number; pct: number }[];
 }
 
+// หมวดที่มีผลจริง (จาก GET payload / categories API) — ตรงกับ EffectiveCategory ฝั่ง server
+interface EffectiveCategory {
+  name: string;
+  emoji: string;
+  kind: Kind;
+  hidden: boolean;
+  isCustom: boolean;
+}
+
+interface CategoriesByKind {
+  income: EffectiveCategory[];
+  expense: EffectiveCategory[];
+}
+
 type Period = "day" | "week" | "month";
+type View = "list" | "report";
 
 // Fixed bar palette (distinct hues; not theme-dependent). Category → color by index.
 const BAR_COLORS = [
@@ -88,10 +108,12 @@ export default function LedgerPage({ params }: { params: { token: string } }) {
   const token = params.token;
   const apiBase = `/api/ledger/${encodeURIComponent(token)}`;
 
+  const [view, setView] = useState<View>("list");
   const [period, setPeriod] = useState<Period>("month");
   const [label, setLabel] = useState<string>("");
   const [summary, setSummary] = useState<Summary | null>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
+  const [categories, setCategories] = useState<CategoriesByKind>({ income: [], expense: [] });
   const [status, setStatus] = useState<"loading" | "ok" | "invalid" | "error">("loading");
   const [errMsg, setErrMsg] = useState<string | null>(null);
 
@@ -113,6 +135,7 @@ export default function LedgerPage({ params }: { params: { token: string } }) {
         setSummary(json.summary as Summary);
         setEntries((json.entries || []) as Entry[]);
         setLabel(json.label as string);
+        if (json.categories) setCategories(json.categories as CategoriesByKind);
         setStatus("ok");
         setErrMsg(null);
       } catch (e) {
@@ -126,6 +149,35 @@ export default function LedgerPage({ params }: { params: { token: string } }) {
   useEffect(() => {
     load(period);
   }, [load, period]);
+
+  // เปลี่ยนหมวดของรายการ (recategorize) — optimistic + PATCH; learn=จำ item→หมวดไว้ครั้งหน้า
+  const recategorizeEntry = useCallback(
+    async (id: string, category: string, learn: boolean) => {
+      const prev = entries;
+      setEntries((cur) => cur.map((e) => (e.id === id ? { ...e, category } : e)));
+      try {
+        const res = await fetch(apiBase, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, category, learn }),
+        });
+        if (!res.ok) {
+          setEntries(prev); // revert
+        } else {
+          // totals/pct ของกราฟเปลี่ยนเมื่อย้ายหมวด — รีเฟรชจาก server
+          load(period);
+        }
+      } catch {
+        setEntries(prev);
+      }
+    },
+    [apiBase, entries, load, period]
+  );
+
+  // หลังจัดการหมวด (add/hide/edit/delete) — รับรายการหมวดสดจาก response แล้วอัปเดต state
+  const applyCategories = useCallback((kind: Kind, list: EffectiveCategory[]) => {
+    setCategories((cur) => ({ ...cur, [kind]: list }));
+  }, []);
 
   const removeEntry = useCallback(
     async (id: string) => {
@@ -163,7 +215,10 @@ export default function LedgerPage({ params }: { params: { token: string } }) {
           <Header label={label} loading={status === "loading"} onRefresh={() => load(period)} />
 
           {status !== "invalid" && (
-            <PeriodToggle period={period} onChange={setPeriod} disabled={status === "loading"} />
+            <div style={sx.toggleRow}>
+              <ViewToggle view={view} onChange={setView} disabled={status === "loading"} />
+              <PeriodToggle period={period} onChange={setPeriod} disabled={status === "loading"} />
+            </div>
           )}
 
           {status === "invalid" && <InvalidState />}
@@ -173,9 +228,24 @@ export default function LedgerPage({ params }: { params: { token: string } }) {
 
           {status !== "invalid" && status !== "error" && summary && (
             <>
-              <SummaryCards summary={summary} />
-              <CategoryChart summary={summary} />
-              <TxList entries={listed} onDelete={removeEntry} />
+              <ManageCategories
+                apiBase={apiBase}
+                categories={categories}
+                onApply={applyCategories}
+                onEntriesChanged={() => load(period)}
+              />
+              {view === "report" && (
+                <>
+                  <SummaryCards summary={summary} />
+                  <CategoryChart summary={summary} />
+                </>
+              )}
+              <TxList
+                entries={listed}
+                categories={categories}
+                onDelete={removeEntry}
+                onRecategorize={recategorizeEntry}
+              />
             </>
           )}
 
@@ -204,6 +274,45 @@ function Header({ label, loading, onRefresh }: { label: string; loading: boolean
       <button onClick={onRefresh} disabled={loading} style={sx.refreshBtn}>
         {loading ? "กำลังโหลด…" : "↻ รีเฟรช"}
       </button>
+    </div>
+  );
+}
+
+// ── view toggle (list / report) ───────────────────────────────────────────────────
+function ViewToggle({
+  view,
+  onChange,
+  disabled,
+}: {
+  view: View;
+  onChange: (v: View) => void;
+  disabled?: boolean;
+}) {
+  const opts: { key: View; label: string }[] = [
+    { key: "list", label: "📋 รายการ" },
+    { key: "report", label: "📊 รายงาน" },
+  ];
+  return (
+    <div style={sx.toggleWrap}>
+      {opts.map((o) => {
+        const active = o.key === view;
+        return (
+          <button
+            key={o.key}
+            onClick={() => !disabled && onChange(o.key)}
+            disabled={disabled}
+            style={{
+              ...sx.toggleBtn,
+              color: active ? T.primaryFg : T.fg,
+              background: active ? T.primary : "transparent",
+              borderColor: active ? T.primary : T.border,
+              fontWeight: active ? 700 : 500,
+            }}
+          >
+            {o.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -308,7 +417,17 @@ function CategoryChart({ summary }: { summary: Summary }) {
 }
 
 // ── transaction list ──────────────────────────────────────────────────────────────
-function TxList({ entries, onDelete }: { entries: Entry[]; onDelete: (id: string) => void }) {
+function TxList({
+  entries,
+  categories,
+  onDelete,
+  onRecategorize,
+}: {
+  entries: Entry[];
+  categories: CategoriesByKind;
+  onDelete: (id: string) => void;
+  onRecategorize: (id: string, category: string, learn: boolean) => void;
+}) {
   return (
     <section style={sx.panel}>
       <div style={sx.panelHead}>
@@ -320,7 +439,13 @@ function TxList({ entries, onDelete }: { entries: Entry[]; onDelete: (id: string
       ) : (
         <div style={sx.rows}>
           {entries.map((e) => (
-            <TxRow key={e.id} entry={e} onDelete={onDelete} />
+            <TxRow
+              key={e.id}
+              entry={e}
+              categories={categories}
+              onDelete={onDelete}
+              onRecategorize={onRecategorize}
+            />
           ))}
         </div>
       )}
@@ -328,18 +453,64 @@ function TxList({ entries, onDelete }: { entries: Entry[]; onDelete: (id: string
   );
 }
 
-function TxRow({ entry, onDelete }: { entry: Entry; onDelete: (id: string) => void }) {
+function TxRow({
+  entry,
+  categories,
+  onDelete,
+  onRecategorize,
+}: {
+  entry: Entry;
+  categories: CategoriesByKind;
+  onDelete: (id: string) => void;
+  onRecategorize: (id: string, category: string, learn: boolean) => void;
+}) {
   const [confirm, setConfirm] = useState(false);
+  // "จำไว้" ต่อแถว: เมื่อติ๊ก การเปลี่ยนหมวดครั้งถัดไปจะส่ง learn:true (จำ item→หมวดไว้ครั้งหน้า)
+  const [remember, setRemember] = useState(false);
   const amtColor = entry.kind === "income" ? T.success : T.danger;
+
+  // ตัวเลือกหมวดของ kind นี้ (กรอง hidden ออก); ถ้าหมวดปัจจุบันถูกซ่อน/หายไป ก็ยังคงเลือกไว้ให้เห็น
+  const options = (entry.kind === "income" ? categories.income : categories.expense).filter(
+    (c) => !c.hidden
+  );
+  const hasCurrent = options.some((c) => c.name === entry.category);
+
   return (
     <div style={sx.row}>
       <div style={sx.rowDate}>{fmtDay(entry.occurred_on)}</div>
       <div style={sx.rowMain}>
         <div style={sx.rowText}>{entry.raw_text || "(ไม่ระบุ)"}</div>
         <div style={sx.rowMeta}>
-          <span style={sx.catChip}>
-            {catEmoji(entry.category)} {entry.category}
-          </span>
+          <select
+            value={entry.category}
+            onChange={(ev) => {
+              const next = ev.target.value;
+              if (next && next !== entry.category) onRecategorize(entry.id, next, remember);
+            }}
+            style={sx.catSelect}
+            title="เปลี่ยนหมวด"
+            aria-label="เปลี่ยนหมวด"
+          >
+            {!hasCurrent && (
+              <option value={entry.category}>
+                {catEmoji(entry.category)} {entry.category}
+              </option>
+            )}
+            {options.map((c) => (
+              <option key={c.name} value={c.name}>
+                {c.emoji} {c.name}
+              </option>
+            ))}
+          </select>
+          <label style={sx.rememberLabel} title="จำ: รายการชื่อเดียวกันครั้งหน้าจะเข้าหมวดนี้เอง">
+            <input
+              type="checkbox"
+              checked={remember}
+              onChange={(ev) => setRemember(ev.target.checked)}
+              style={sx.rememberBox}
+            />
+            จำไว้
+          </label>
           {entry.note && <span style={sx.noteText}>· {entry.note}</span>}
         </div>
       </div>
@@ -359,6 +530,264 @@ function TxRow({ entry, onDelete }: { entry: Entry; onDelete: (id: string) => vo
           onClick={() => setConfirm(true)}
           aria-label="ลบรายการ"
           title="ลบรายการ"
+        >
+          ✕
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── manage categories panel (collapsible) ───────────────────────────────────────
+function ManageCategories({
+  apiBase,
+  categories,
+  onApply,
+  onEntriesChanged,
+}: {
+  apiBase: string;
+  categories: CategoriesByKind;
+  onApply: (kind: Kind, list: EffectiveCategory[]) => void;
+  onEntriesChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // ยิงคำสั่งจัดการหมวด → รับ categories สดกลับมา แล้ว apply เข้า state (refresh in place)
+  const call = useCallback(
+    async (
+      method: "POST" | "PATCH" | "DELETE",
+      kind: Kind,
+      payload: Record<string, unknown>,
+      migratesEntries = false
+    ) => {
+      setBusy(true);
+      setErr(null);
+      try {
+        const res = await fetch(`${apiBase}/categories`, {
+          method,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind, ...payload }),
+        });
+        const json = await res.json();
+        if (!res.ok || !json?.ok) {
+          setErr(json?.reason || `HTTP ${res.status}`);
+          return false;
+        }
+        onApply(kind, (json.categories || []) as EffectiveCategory[]);
+        // rename/delete ย้าย entries ด้วย → รีเฟรชรายการ/ยอดรวม
+        if (migratesEntries) onEntriesChanged();
+        return true;
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : String(e));
+        return false;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [apiBase, onApply, onEntriesChanged]
+  );
+
+  return (
+    <section style={sx.panel}>
+      <button
+        style={sx.manageToggle}
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+      >
+        <span>⚙️ จัดการหมวด</span>
+        <span style={sx.manageChevron}>{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <div style={sx.manageBody}>
+          {err && <Banner>จัดการหมวดไม่สำเร็จ: {err}</Banner>}
+          <ManageKind
+            kind="expense"
+            title="รายจ่าย"
+            list={categories.expense}
+            busy={busy}
+            call={call}
+          />
+          <ManageKind
+            kind="income"
+            title="รายรับ"
+            list={categories.income}
+            busy={busy}
+            call={call}
+          />
+        </div>
+      )}
+    </section>
+  );
+}
+
+// จัดการหมวดของ kind เดียว: รายการหมวด (แก้อีโมจิ/เปลี่ยนชื่อ/ซ่อน/ลบ) + ฟอร์มเพิ่มหมวด
+function ManageKind({
+  kind,
+  title,
+  list,
+  busy,
+  call,
+}: {
+  kind: Kind;
+  title: string;
+  list: EffectiveCategory[];
+  busy: boolean;
+  call: (
+    method: "POST" | "PATCH" | "DELETE",
+    kind: Kind,
+    payload: Record<string, unknown>,
+    migratesEntries?: boolean
+  ) => Promise<boolean>;
+}) {
+  const [newName, setNewName] = useState("");
+  const [newEmoji, setNewEmoji] = useState("");
+
+  const add = async () => {
+    if (!newName.trim()) return;
+    const ok = await call("POST", kind, { name: newName.trim(), emoji: newEmoji.trim() || undefined });
+    if (ok) {
+      setNewName("");
+      setNewEmoji("");
+    }
+  };
+
+  return (
+    <div style={sx.manageKind}>
+      <div style={sx.manageKindTitle}>{title}</div>
+      <div style={sx.manageList}>
+        {list.map((c) => (
+          <ManageCatRow key={c.name} kind={kind} cat={c} busy={busy} call={call} />
+        ))}
+      </div>
+      <div style={sx.addRow}>
+        <input
+          value={newEmoji}
+          onChange={(e) => setNewEmoji(e.target.value)}
+          placeholder="🙂"
+          style={sx.addEmoji}
+          maxLength={4}
+          aria-label="อีโมจิหมวดใหม่"
+        />
+        <input
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") add();
+          }}
+          placeholder="เพิ่มหมวดใหม่…"
+          style={sx.addName}
+          aria-label="ชื่อหมวดใหม่"
+        />
+        <button style={sx.addBtn} onClick={add} disabled={busy || !newName.trim()}>
+          + เพิ่ม
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// หนึ่งแถวหมวดในหน้าจัดการ: อีโมจิ+ชื่อ · ปุ่มแก้ (custom) · ซ่อน/เปิด · ลบ (custom)
+function ManageCatRow({
+  kind,
+  cat,
+  busy,
+  call,
+}: {
+  kind: Kind;
+  cat: EffectiveCategory;
+  busy: boolean;
+  call: (
+    method: "POST" | "PATCH" | "DELETE",
+    kind: Kind,
+    payload: Record<string, unknown>,
+    migratesEntries?: boolean
+  ) => Promise<boolean>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [emoji, setEmoji] = useState(cat.emoji);
+  const [name, setName] = useState(cat.name);
+  const isFallback = cat.name === "อื่นๆ";
+
+  const saveEdit = async () => {
+    const patch: Record<string, unknown> = {};
+    if (emoji.trim() && emoji.trim() !== cat.emoji) patch.emoji = emoji.trim();
+    // เปลี่ยนชื่อได้เฉพาะ custom (built-in rename ไม่รองรับ → server ปฏิเสธ)
+    if (cat.isCustom && name.trim() && name.trim() !== cat.name) patch.newName = name.trim();
+    if (Object.keys(patch).length === 0) {
+      setEditing(false);
+      return;
+    }
+    const ok = await call("PATCH", kind, { name: cat.name, ...patch }, Boolean(patch.newName));
+    if (ok) setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div style={sx.manageRow}>
+        <input
+          value={emoji}
+          onChange={(e) => setEmoji(e.target.value)}
+          style={sx.editEmoji}
+          maxLength={4}
+          aria-label="อีโมจิ"
+        />
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          style={sx.editName}
+          disabled={!cat.isCustom}
+          aria-label="ชื่อหมวด"
+        />
+        <button style={sx.miniPrimary} onClick={saveEdit} disabled={busy}>
+          บันทึก
+        </button>
+        <button style={sx.miniGhost} onClick={() => setEditing(false)} disabled={busy}>
+          ยกเลิก
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ ...sx.manageRow, opacity: cat.hidden ? 0.5 : 1 }}>
+      <span style={sx.manageCatName}>
+        {cat.emoji} {cat.name}
+        {cat.isCustom && <span style={sx.customTag}>custom</span>}
+        {cat.hidden && <span style={sx.hiddenTag}>ซ่อน</span>}
+      </span>
+      <button
+        style={sx.miniIcon}
+        onClick={() => {
+          setEmoji(cat.emoji);
+          setName(cat.name);
+          setEditing(true);
+        }}
+        disabled={busy}
+        title="แก้อีโมจิ/ชื่อ"
+        aria-label="แก้ไข"
+      >
+        ✎
+      </button>
+      {!isFallback && (
+        <button
+          style={sx.miniIcon}
+          onClick={() => call("PATCH", kind, { name: cat.name, hidden: !cat.hidden })}
+          disabled={busy}
+          title={cat.hidden ? "เปิดหมวดนี้" : "ซ่อนหมวดนี้"}
+          aria-label={cat.hidden ? "เปิด" : "ซ่อน"}
+        >
+          {cat.hidden ? "🙈" : "👁"}
+        </button>
+      )}
+      {cat.isCustom && (
+        <button
+          style={sx.miniIconDanger}
+          onClick={() => call("DELETE", kind, { name: cat.name }, true)}
+          disabled={busy}
+          title="ลบหมวด (รายการเดิมจะย้ายไป อื่นๆ)"
+          aria-label="ลบ"
         >
           ✕
         </button>
@@ -494,7 +923,8 @@ const sx: Record<string, React.CSSProperties> = {
     cursor: "pointer",
   },
 
-  // period toggle
+  // view + period toggles (share one row, wrap on mobile)
+  toggleRow: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" },
   toggleWrap: {
     display: "inline-flex",
     gap: 6,
@@ -589,7 +1019,173 @@ const sx: Record<string, React.CSSProperties> = {
     borderRadius: 999,
     padding: "1px 9px",
   },
+  // per-row category selector + "จำไว้" checkbox
+  catSelect: {
+    fontFamily: FONT,
+    fontSize: 11.5,
+    color: T.fg,
+    background: T.surface2,
+    border: `1px solid ${T.border}`,
+    borderRadius: 999,
+    padding: "2px 8px",
+    maxWidth: 170,
+    cursor: "pointer",
+  },
+  rememberLabel: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    fontSize: 11,
+    color: T.muted2,
+    cursor: "pointer",
+    userSelect: "none",
+  },
+  rememberBox: { width: 13, height: 13, accentColor: T.primary, cursor: "pointer" },
   noteText: { fontSize: 11.5, color: T.muted2 },
+
+  // manage-categories panel
+  manageToggle: {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    fontFamily: FONT,
+    fontSize: 14.5,
+    fontWeight: 700,
+    color: T.fgStrong,
+    background: "transparent",
+    border: "none",
+    padding: 0,
+    cursor: "pointer",
+  },
+  manageChevron: { fontSize: 11, color: T.muted },
+  manageBody: { display: "flex", flexDirection: "column", gap: 16, marginTop: 14 },
+  manageKind: { display: "flex", flexDirection: "column", gap: 8 },
+  manageKindTitle: { fontSize: 13, fontWeight: 700, color: T.primary },
+  manageList: { display: "flex", flexDirection: "column", gap: 6 },
+  manageRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    border: `1px solid ${T.border}`,
+    borderRadius: 10,
+    padding: "6px 10px",
+    background: T.surface,
+  },
+  manageCatName: { flex: 1, minWidth: 0, fontSize: 13.5, color: T.fg, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" },
+  customTag: {
+    fontSize: 9.5,
+    fontWeight: 700,
+    color: T.primary,
+    background: T.primaryWeak,
+    borderRadius: 6,
+    padding: "0 5px",
+    letterSpacing: 0.3,
+    textTransform: "uppercase",
+  },
+  hiddenTag: {
+    fontSize: 9.5,
+    fontWeight: 700,
+    color: T.muted2,
+    background: T.surface2,
+    border: `1px solid ${T.border}`,
+    borderRadius: 6,
+    padding: "0 5px",
+  },
+  addRow: { display: "flex", gap: 6, alignItems: "center", marginTop: 2 },
+  addEmoji: {
+    fontFamily: FONT,
+    fontSize: 13.5,
+    width: 44,
+    textAlign: "center",
+    color: T.fg,
+    background: T.surface2,
+    border: `1px solid ${T.border}`,
+    borderRadius: 9,
+    padding: "6px 4px",
+  },
+  addName: {
+    flex: 1,
+    minWidth: 0,
+    fontFamily: FONT,
+    fontSize: 13.5,
+    color: T.fg,
+    background: T.surface2,
+    border: `1px solid ${T.border}`,
+    borderRadius: 9,
+    padding: "6px 10px",
+  },
+  addBtn: {
+    fontFamily: FONT,
+    fontSize: 12.5,
+    fontWeight: 700,
+    color: T.primaryFg,
+    background: T.primary,
+    border: "none",
+    borderRadius: 9,
+    padding: "7px 12px",
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
+  editEmoji: {
+    fontFamily: FONT,
+    fontSize: 13.5,
+    width: 44,
+    textAlign: "center",
+    color: T.fg,
+    background: T.surface2,
+    border: `1px solid ${T.border}`,
+    borderRadius: 8,
+    padding: "5px 4px",
+  },
+  editName: {
+    flex: 1,
+    minWidth: 0,
+    fontFamily: FONT,
+    fontSize: 13.5,
+    color: T.fg,
+    background: T.surface2,
+    border: `1px solid ${T.border}`,
+    borderRadius: 8,
+    padding: "5px 9px",
+  },
+  miniPrimary: {
+    fontFamily: FONT,
+    fontSize: 12,
+    fontWeight: 700,
+    color: T.primaryFg,
+    background: T.primary,
+    border: "none",
+    borderRadius: 8,
+    padding: "6px 10px",
+    cursor: "pointer",
+  },
+  miniIcon: {
+    flex: "0 0 auto",
+    width: 28,
+    height: 28,
+    fontSize: 13,
+    color: T.muted,
+    background: "transparent",
+    border: `1px solid ${T.border}`,
+    borderRadius: 8,
+    cursor: "pointer",
+    display: "grid",
+    placeItems: "center",
+  },
+  miniIconDanger: {
+    flex: "0 0 auto",
+    width: 28,
+    height: 28,
+    fontSize: 12,
+    color: T.danger,
+    background: "transparent",
+    border: `1px solid ${T.danger}55`,
+    borderRadius: 8,
+    cursor: "pointer",
+    display: "grid",
+    placeItems: "center",
+  },
   rowAmt: {
     flex: "0 0 auto",
     fontSize: 15,

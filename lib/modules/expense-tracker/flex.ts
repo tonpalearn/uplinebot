@@ -14,6 +14,8 @@ import type { LedgerRow } from "./ledger";
  * buildSummaryFlex    → the polished "graph card": net balance header, income/expense/net
  *                       rows, then per-category HORIZONTAL BARS (the graph) + a web-report
  *                       button. Quick Reply (วันนี้/สัปดาห์/เดือน) attached.
+ * buildEntryListFlex  → a clean NUMBERED list card (item+emoji, category, signed amount) —
+ *                       the simple "รายการ" view (no graph). Empty → friendly hint text.
  * buildSummaryText    → plain-text fallback (totals + category lines).
  */
 
@@ -72,13 +74,14 @@ function signedNet(net: number): string {
 }
 
 // ── Quick Reply ────────────────────────────────────────────────────────────────
-/** ปุ่มลัดหลังการ์ด/คอนเฟิร์ม: สรุปวันนี้ / สัปดาห์ / เดือน / รายงาน */
+/** ปุ่มลัดหลังการ์ด/คอนเฟิร์ม: สรุปวันนี้ / สัปดาห์ / เดือน / รายการ / รายงาน */
 export function ledgerQuickReply(): { items: QuickReplyItem[] } {
   return {
     items: [
       { type: "action", action: { type: "message", label: "📅 วันนี้", text: "สรุปวันนี้" } },
       { type: "action", action: { type: "message", label: "🗓️ สัปดาห์", text: "สรุปสัปดาห์" } },
       { type: "action", action: { type: "message", label: "📆 เดือน", text: "สรุปเดือน" } },
+      { type: "action", action: { type: "message", label: "📋 รายการ", text: "รายการ" } },
       { type: "action", action: { type: "message", label: "📊 รายงาน", text: "รายงาน" } },
     ],
   };
@@ -99,6 +102,103 @@ export function buildRecordConfirm(
   );
   const text = `✅ บันทึก ${inserted.length} รายการ: ${parts.join(", ")}`;
   return { type: "text", text, quickReply: ledgerQuickReply() };
+}
+
+// ── entry list flex (the simple list card) ──────────────────────────────────────
+export interface EntryListFlexOpts {
+  periodLabel: string;
+}
+
+/** หนึ่งแถวรายการในลิสต์: เลขลำดับ + อีโมจิ/ชื่อรายการ + หมวด (ซ้าย) แล้วจำนวนมีสี (ขวา) */
+function entryRow(index: number, row: LedgerRow): Record<string, unknown> {
+  const amtColor = row.kind === "income" ? COLOR_GREEN : COLOR_RED;
+  return {
+    type: "box",
+    layout: "horizontal",
+    margin: "md",
+    spacing: "sm",
+    contents: [
+      {
+        type: "text",
+        text: `${index}.`,
+        size: "sm",
+        color: COLOR_MUTED,
+        flex: 0,
+        align: "start",
+      },
+      {
+        type: "box",
+        layout: "vertical",
+        flex: 1,
+        spacing: "none",
+        contents: [
+          {
+            type: "text",
+            text: `${categoryEmoji(row.category)} ${row.raw_text ?? "(ไม่ระบุ)"}`,
+            size: "sm",
+            color: COLOR_TEXT,
+            wrap: true,
+          },
+          { type: "text", text: row.category, size: "xxs", color: COLOR_MUTED, margin: "xs" },
+        ],
+      },
+      {
+        type: "text",
+        text: signed(row.kind, row.amount),
+        size: "sm",
+        color: amtColor,
+        weight: "bold",
+        align: "end",
+        flex: 0,
+      },
+    ],
+  };
+}
+
+/**
+ * การ์ดลิสต์รายการแบบเรียบง่าย (ไม่มีกราฟ) — ใช้กับคำสั่ง "รายการ"/"ลิสต์".
+ * header ป้ายช่วง + จำนวนรายการ, body รายการมีเลขลำดับ (อีโมจิ+ชื่อ, หมวด, จำนวนมีสี),
+ * footer ปุ่มดูรายงานเว็บได้ต่อจากภายนอกผ่าน Quick Reply. ว่าง → คืนข้อความชวนบันทึกแทน.
+ */
+export function buildEntryListFlex(entries: LedgerRow[], opts: EntryListFlexOpts): OutboundMessage {
+  // ว่าง → ข้อความเป็นมิตร (ไม่ต้องขึ้นการ์ดเปล่า)
+  if (entries.length === 0) {
+    return {
+      type: "text",
+      text: "ยังไม่มีรายการวันนี้ พิมพ์ เช่น 'กาแฟ 50' เพื่อบันทึก",
+      quickReply: ledgerQuickReply(),
+    };
+  }
+
+  const bodyContents: Record<string, unknown>[] = entries.map((r, i) => entryRow(i + 1, r));
+
+  const bubble: Record<string, unknown> = {
+    type: "bubble",
+    header: {
+      type: "box",
+      layout: "vertical",
+      paddingAll: "16px",
+      paddingBottom: "12px",
+      contents: [
+        { type: "text", text: `📋 รายการ ${opts.periodLabel}`, size: "md", weight: "bold", color: COLOR_TEXT },
+        { type: "text", text: `${entries.length} รายการ`, size: "xxs", color: COLOR_MUTED, margin: "sm" },
+      ],
+    },
+    body: {
+      type: "box",
+      layout: "vertical",
+      paddingAll: "16px",
+      paddingTop: "8px",
+      spacing: "none",
+      contents: bodyContents,
+    },
+    styles: {
+      header: { backgroundColor: COLOR_HEADER_BG },
+    },
+  };
+
+  const altText = `รายการ ${opts.periodLabel} — ${entries.length} รายการ`;
+  return { type: "flex", altText, contents: bubble, quickReply: ledgerQuickReply() };
 }
 
 // ── summary flex (the graph card) ──────────────────────────────────────────────

@@ -2,7 +2,11 @@ import { describe, it, expect } from "vitest";
 import { parseLedgerIntent } from "@/lib/modules/expense-tracker/parse";
 import { categorizeLocal } from "@/lib/modules/expense-tracker/categories";
 import { aggregate, periodRange } from "@/lib/modules/expense-tracker/summary";
-import { buildSummaryFlex, buildRecordConfirm } from "@/lib/modules/expense-tracker/flex";
+import {
+  buildSummaryFlex,
+  buildRecordConfirm,
+  buildEntryListFlex,
+} from "@/lib/modules/expense-tracker/flex";
 import type { LedgerSummary } from "@/lib/modules/expense-tracker/summary";
 import type { LedgerRow } from "@/lib/modules/expense-tracker/ledger";
 
@@ -169,6 +173,51 @@ describe("parseLedgerIntent — commands", () => {
   });
 });
 
+describe("parseLedgerIntent — list command (NEW)", () => {
+  // The "list" intent is a simple numbered list of today's entries — distinct from the
+  // "summary" graph card. CMD_LIST matches these four exact strings (case-insensitive).
+  it("'รายการ' → list", () => {
+    expect(parseLedgerIntent("รายการ", NOW)).toEqual({ action: "list" });
+  });
+
+  it("'ลิสต์' → list", () => {
+    expect(parseLedgerIntent("ลิสต์", NOW)).toEqual({ action: "list" });
+  });
+
+  it("'list' → list", () => {
+    expect(parseLedgerIntent("list", NOW)).toEqual({ action: "list" });
+  });
+
+  it("'LIST' (upper-case) → list (CMD_LIST is case-insensitive)", () => {
+    expect(parseLedgerIntent("LIST", NOW)).toEqual({ action: "list" });
+  });
+
+  it("'รายการวันนี้' → list", () => {
+    expect(parseLedgerIntent("รายการวันนี้", NOW)).toEqual({ action: "list" });
+  });
+
+  // ── Regression: list must NOT swallow the existing commands / record / todo paths ──
+  it("regression: 'สรุป' still → summary day (NOT list)", () => {
+    expect(parseLedgerIntent("สรุป", NOW)).toEqual({ action: "summary", period: "day" });
+  });
+
+  it("regression: 'วันนี้' still → summary day (NOT list)", () => {
+    expect(parseLedgerIntent("วันนี้", NOW)).toEqual({ action: "summary", period: "day" });
+  });
+
+  it("regression: 'กาแฟ 50' still → record (a plain entry, not a list command)", () => {
+    const intent = parseLedgerIntent("กาแฟ 50", NOW);
+    expect(intent?.action).toBe("record");
+    if (intent?.action !== "record") throw new Error("expected record");
+    expect(intent.entries).toHaveLength(1);
+    expect(intent.entries[0].amount).toBe(50);
+  });
+
+  it("regression: 'ลบ 2' still → null (todo delete; not a ledger list)", () => {
+    expect(parseLedgerIntent("ลบ 2", NOW)).toBeNull();
+  });
+});
+
 describe("parseLedgerIntent — junk / empty", () => {
   it("'สวัสดีครับ' → null", () => {
     expect(parseLedgerIntent("สวัสดีครับ", NOW)).toBeNull();
@@ -323,5 +372,78 @@ describe("flex builders — shape only", () => {
     expect(msg.quickReply).toBeDefined();
     expect(msg.quickReply?.items.length).toBeGreaterThan(0);
     expect(msg.quickReply?.items[0].type).toBe("action");
+  });
+});
+
+// ── buildEntryListFlex (the simple numbered list card — NEW) ─────────────────────────────────
+
+describe("buildEntryListFlex — shape + item count", () => {
+  // Minimal LedgerRow factory; only the fields buildEntryListFlex reads matter, but we
+  // populate the full shape so the test stays honest against the LedgerRow contract.
+  function row(
+    id: string,
+    kind: "income" | "expense",
+    amount: number,
+    category: string,
+    raw_text: string | null
+  ): LedgerRow {
+    return {
+      id,
+      target_id: "target-1",
+      kind,
+      amount,
+      category,
+      note: null,
+      raw_text,
+      occurred_on: "2026-07-03",
+      created_at: `2026-07-03T05:00:0${id.slice(-1)}.000Z`,
+      deleted_at: null,
+    };
+  }
+
+  const rows: LedgerRow[] = [
+    row("1", "expense", 50, "กิน", "กาแฟ"),
+    row("2", "expense", 500, "เดินทาง", "น้ำมัน"),
+    row("3", "income", 30000, "เงินเดือน", "เงินเดือน"),
+  ];
+
+  it("3 rows → flex bubble message; altText + count reflect 3 items", () => {
+    const msg = buildEntryListFlex(rows, { periodLabel: "วันนี้ 3 ก.ค." });
+    expect(msg.type).toBe("flex");
+    expect(typeof msg.altText).toBe("string");
+    expect(msg.altText).toContain("3 รายการ");
+    expect(msg.contents).toBeDefined();
+    expect(msg.contents?.type).toBe("bubble");
+    // body has exactly one entry box per row (numbered list).
+    const body = msg.contents?.body as { contents: unknown[] };
+    expect(Array.isArray(body.contents)).toBe(true);
+    expect(body.contents).toHaveLength(3);
+    // Quick Reply attached.
+    expect(msg.quickReply?.items.length).toBeGreaterThan(0);
+  });
+
+  it("2 rows → count reflects 2 items (altText + body length)", () => {
+    const msg = buildEntryListFlex(rows.slice(0, 2), { periodLabel: "วันนี้ 3 ก.ค." });
+    expect(msg.type).toBe("flex");
+    expect(msg.altText).toContain("2 รายการ");
+    const body = msg.contents?.body as { contents: unknown[] };
+    expect(body.contents).toHaveLength(2);
+  });
+
+  it("empty array → a valid message that does not throw (friendly hint, with quickReply)", () => {
+    let msg: ReturnType<typeof buildEntryListFlex>;
+    expect(() => {
+      msg = buildEntryListFlex([], { periodLabel: "วันนี้ 3 ก.ค." });
+    }).not.toThrow();
+    // The builder returns a text hint (not an empty card) — assert it is a usable message.
+    msg = buildEntryListFlex([], { periodLabel: "วันนี้ 3 ก.ค." });
+    expect(["text", "flex"]).toContain(msg.type);
+    if (msg.type === "text") {
+      expect(typeof msg.text).toBe("string");
+      expect(msg.text && msg.text.length).toBeGreaterThan(0);
+    } else {
+      expect(msg.contents).toBeDefined();
+    }
+    expect(msg.quickReply?.items.length).toBeGreaterThan(0);
   });
 });

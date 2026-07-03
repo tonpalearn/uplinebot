@@ -2,7 +2,7 @@ import type { ModuleHandler, LineEvent, ModuleConfig, TenantContext, OutboundMes
 import { parseLedgerIntent } from "./parse";
 import { addEntries, getEntries, deleteLast } from "./ledger";
 import { aggregate, periodRange } from "./summary";
-import { buildRecordConfirm, buildSummaryFlex, ledgerQuickReply } from "./flex";
+import { buildRecordConfirm, buildSummaryFlex, buildEntryListFlex, ledgerQuickReply } from "./flex";
 import { getOrCreateLedgerToken, ledgerReportUrl } from "../../ledger-token";
 
 /**
@@ -15,6 +15,7 @@ import { getOrCreateLedgerToken, ledgerReportUrl } from "../../ledger-token";
  * UX (parseLedgerIntent decides which):
  *   - record  : พิมพ์รายการ (มีจำนวนเงิน) เช่น "กาแฟ 50" / "+เงินเดือน 30000" / หลายบรรทัด/คั่น ,
  *   - summary : "สรุปวันนี้" / "สัปดาห์" / "เดือน" → การ์ดกราฟ Flex
+ *   - list    : "รายการ" / "ลิสต์" / "list"        → การ์ดลิสต์รายการวันนี้ (เรียบง่าย ไม่มีกราฟ)
  *   - report  : "รายงาน" / "report" / "กราฟ"      → ลิงก์หน้าเว็บ /ledger/<token>
  *   - undo    : "ยกเลิก" / "ลบล่าสุด" / "undo"      → soft-delete รายการล่าสุด
  * ข้อความอื่นที่ไม่มีจำนวนเงิน → ไม่แมตช์ (บอทเงียบ ไม่จดขยะ). "ลบ" เดี่ยวเป็นของโมดูล todo.
@@ -48,6 +49,13 @@ export const ExpenseTrackerModule: ModuleHandler = {
         const token = await getOrCreateLedgerToken(ctx.targetId);
         const reportUrl = ledgerReportUrl(token);
         return [buildSummaryFlex(summary, { periodLabel: label, reportUrl, quick: true })];
+      }
+
+      case "list": {
+        // รายการวันนี้แบบเรียบง่าย (ไม่มีกราฟ) — โหลดช่วง "วันนี้" แล้วคืนการ์ดลิสต์
+        const { from, to, label } = periodRange("day", now);
+        const rows = await getEntries(ctx.targetId, from, to);
+        return [buildEntryListFlex(rows, { periodLabel: label })];
       }
 
       case "report": {

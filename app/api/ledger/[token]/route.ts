@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServiceClient } from "@/lib/db";
 import { validateLedgerToken } from "@/lib/ledger-token";
 import { aggregate, periodRange } from "@/lib/modules/expense-tracker/summary";
+import { recategorize } from "@/lib/modules/expense-tracker/ledger";
+import { listEffectiveCategories } from "@/lib/modules/expense-tracker/category-store";
 import type { LedgerKind } from "@/lib/modules/expense-tracker/categories";
 
 // Customer-facing ledger report API — token IS the auth (no admin token). Never prerender:
@@ -17,7 +19,9 @@ export const dynamic = "force-dynamic";
  * resolved targetId — a targetId is never trusted from the request body, so one token can only
  * ever see/mutate its own chat's entries (per-group isolation preserved).
  *
- *   GET    ?period=day|week|month (default month) → { ok, period, label, summary, entries }.
+ *   GET    ?period=day|week|month (default month) → { ok, period, label, summary, entries,
+ *                                                     categories:{income,expense} } (dropdowns).
+ *   PATCH  { id, category, learn? }                → recategorize IF the row belongs to target.
  *   DELETE { id } (or ?id=)                        → soft-delete IF the row belongs to target.
  */
 
@@ -74,7 +78,51 @@ export async function GET(req: NextRequest, ctx: RouteCtx): Promise<NextResponse
   const entries = (data ?? []) as unknown as LedgerRow[];
   const summary = aggregate(entries);
 
-  return NextResponse.json({ ok: true, period, label, summary, entries });
+  // ส่ง effective categories ทั้งสอง kind มาด้วย เพื่อให้เว็บเติม dropdown ได้ในรอบเดียว
+  const [income, expense] = await Promise.all([
+    listEffectiveCategories(auth.targetId, "income"),
+    listEffectiveCategories(auth.targetId, "expense"),
+  ]);
+
+  return NextResponse.json({
+    ok: true,
+    period,
+    label,
+    summary,
+    entries,
+    categories: { income, expense },
+  });
+}
+
+// ── PATCH: recategorize an entry that belongs to this target ─────────────────────
+export async function PATCH(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
+  const auth = await validateLedgerToken(ctx.params.token);
+  if (!auth) return unauthorized();
+
+  let body: { id?: unknown; category?: unknown; learn?: unknown };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ ok: false, reason: "invalid_json" }, { status: 400 });
+  }
+
+  const id = typeof body.id === "string" ? body.id : "";
+  const category = typeof body.category === "string" ? body.category.trim() : "";
+  if (!id) {
+    return NextResponse.json({ ok: false, reason: "id is required" }, { status: 400 });
+  }
+  if (!category) {
+    return NextResponse.json({ ok: false, reason: "category is required" }, { status: 400 });
+  }
+
+  const learn = Boolean(body.learn);
+  // recategorize scope ด้วย (id, target_id) เอง — คืน null ถ้าไม่ใช่รายการของ target นี้
+  const row = await recategorize(auth.targetId, id, category, learn);
+  if (!row) {
+    return NextResponse.json({ ok: false, reason: "not_found" }, { status: 404 });
+  }
+
+  return NextResponse.json({ ok: true, entry: row });
 }
 
 // ── DELETE: soft-delete an entry that belongs to this target ─────────────────────
