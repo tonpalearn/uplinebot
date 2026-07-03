@@ -83,6 +83,11 @@ const FEATURES = [
     t: "CRM & หลายสาขา",
     d: "เก็บข้อมูลลูกค้า ติดตามงานที่ต้องตามต่อ และดูแลได้หลายสาขาจากศูนย์กลางเดียว",
   },
+  {
+    icon: "wallet",
+    t: "บันทึกรายรับ-รายจ่าย",
+    d: "จดเงินในแชทด้วยการพิมพ์ธรรมดา ระบบจัดหมวดให้เอง สรุปรายวัน/สัปดาห์/เดือนเป็นกราฟการ์ดสวยในไลน์ + หน้ารายงานเว็บ",
+  },
 ] as const;
 
 const STEPS = [
@@ -102,6 +107,7 @@ const MATRIX: { t: string; a: [boolean, boolean, boolean] }[] = [
   { t: "CRM & เก็บลีด", a: [false, true, true] },
   { t: "คอมมูนิตี้ & ส่งคอร์ส", a: [false, true, true] },
   { t: "จัดการหลายสาขา", a: [false, true, true] },
+  { t: "บันทึกรายรับ-รายจ่าย & รายงาน", a: [false, true, true] },
   { t: "Receipt/ค่าใช้จ่าย OCR & e-KYC", a: [false, false, true] },
   { t: "Internal Ops: HR & อนุมัติ", a: [false, false, true] },
 ];
@@ -208,7 +214,7 @@ export default function LandingPage() {
         <div className={`${s.container} ${s.statsGrid}`}>
           <div className={s.stat}><div className={s.statNum}>24/7</div><div className={s.statLabel}>ทำงานไม่มีวันหยุด</div></div>
           <div className={s.stat}><div className={s.statNum}>&lt; 1 วิ</div><div className={s.statLabel}>ตอบลูกค้าทันที</div></div>
-          <div className={s.stat}><div className={s.statNum}>13</div><div className={s.statLabel}>โมดูลพร้อมใช้</div></div>
+          <div className={s.stat}><div className={s.statNum}>14</div><div className={s.statLabel}>โมดูลพร้อมใช้</div></div>
           <div className={s.stat}><div className={s.statNum}>10 นาที</div><div className={s.statLabel}>ติดตั้งเสร็จ</div></div>
         </div>
       </section>
@@ -449,6 +455,8 @@ function FeatureIcon({ name }: { name: string }) {
       return <svg width="24" height="24" viewBox="0 0 24 24" {...base}><circle cx="9" cy="20" r="1.4" /><circle cx="18" cy="20" r="1.4" /><path d="M2 3h3l2.5 12.5A2 2 0 0 0 9.5 17H18a2 2 0 0 0 2-1.6L21.5 8H6" /></svg>;
     case "users":
       return <svg width="24" height="24" viewBox="0 0 24 24" {...base}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8" /></svg>;
+    case "wallet":
+      return <svg width="24" height="24" viewBox="0 0 24 24" {...base}><path d="M3 7a2 2 0 0 1 2-2h13a1 1 0 0 1 1 1v2" /><path d="M3 7v10a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-3" /><path d="M22 11h-5a2 2 0 0 0 0 4h5v-4z" /></svg>;
     default:
       return null;
   }

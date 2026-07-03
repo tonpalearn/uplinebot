@@ -1,6 +1,7 @@
 import { AssistantModule } from "./assistant/handler";
 import { BroadcastModule } from "./broadcast/handler";
 import { SlipVerificationModule } from "./slip-verification/handler";
+import { ExpenseTrackerModule } from "./expense-tracker/handler";
 import { isModuleEntitled } from "../entitlement";
 import type { LineEvent, ModuleHandler, OutboundMessage, TenantContext } from "./types";
 import { getServiceClient } from "../db";
@@ -17,6 +18,7 @@ export const MODULE_REGISTRY: Record<string, ModuleHandler> = {
   assistant_productivity: AssistantModule,
   broadcast_campaigns: BroadcastModule,
   slip_verification: SlipVerificationModule,
+  expense_tracker: ExpenseTrackerModule,
   // ...remaining modules added as built, per SPEC.md §16 roadmap (P3/P4).
 };
 
@@ -29,10 +31,14 @@ export const MODULE_REGISTRY: Record<string, ModuleHandler> = {
  */
 const ROUTER_PRIORITY: string[] = [
   "slip_verification",
-  // Broadcast trigger keywords (exact-match) get first shot at TEXT so they win over the
-  // Assistant's "any plain text = add a todo" fallback. Assistant is deliberately LAST.
+  // Broadcast trigger keywords (exact-match) get first shot at TEXT.
   "broadcast_campaigns",
+  // Assistant (Todo) is checked BEFORE Expense Tracker so its explicit commands win — most
+  // importantly "ลบ N" (delete todo #N), which the ledger parser would otherwise read as a
+  // ฿N record. Todo only matches its own commands (เพิ่ม/ค้าง/ลบ N/เลื่อน/วางแผน/…); everything
+  // else (money lines like "กาแฟ 50", and สรุป/รายงาน/ยกเลิก) falls through to Expense Tracker.
   "assistant_productivity",
+  "expense_tracker",
 ];
 
 async function loadModuleConfig(targetId: string, moduleKey: string): Promise<Record<string, unknown>> {
