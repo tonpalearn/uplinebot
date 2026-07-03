@@ -169,6 +169,14 @@ export default function CustomersPage() {
     }
   }
 
+  // Replace a bot in local state after an in-place edit (PATCH), keeping its tenant grouping.
+  function updateBot(tenantId: string, updated: Bot) {
+    setBotsByTenant((prev) => ({
+      ...prev,
+      [tenantId]: (prev[tenantId] || []).map((b) => (b.id === updated.id ? { ...b, ...updated } : b)),
+    }));
+  }
+
   const coreModules = modules.filter((m) => m.is_core);
   const sellableModules = modules.filter((m) => !m.is_core);
 
@@ -274,23 +282,12 @@ export default function CustomersPage() {
                   </div>
                 ) : (
                   bots.map((b) => (
-                    <div
+                    <BotRow
                       key={b.id}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 10,
-                        flexWrap: "wrap",
-                        fontSize: 13,
-                        padding: "6px 0",
-                      }}
-                    >
-                      <code style={{ color: COLORS.blue, wordBreak: "break-all" }}>{b.line_channel_id}</code>
-                      <span style={{ color: COLORS.textMuted }}>· {b.group_reply_mode}</span>
-                      <span style={{ color: b.active ? COLORS.green : COLORS.danger }}>
-                        {b.active ? "● active" : "○ inactive"}
-                      </span>
-                    </div>
+                      bot={b}
+                      adminFetch={adminFetch}
+                      onSaved={(updated) => updateBot(t.id, updated)}
+                    />
                   ))
                 )}
               </div>
@@ -365,5 +362,251 @@ export default function CustomersPage() {
         })}
       </div>
     </main>
+  );
+}
+
+// One connected LINE OA row: shows the Bot User ID (copyable) + reply mode + status, and an
+// in-place edit form (fix the Bot User ID, switch reply mode, or re-enter secret/token).
+type AdminFetch = (path: string, init?: RequestInit) => Promise<any>;
+type DetectedDest = { destination: string; count: number; matched: boolean };
+const REPLY_MODES: { key: "mention_only" | "prefix" | "all"; label: string }[] = [
+  { key: "all", label: "ทุกข้อความ" },
+  { key: "mention_only", label: "เมื่อ @บอท" },
+  { key: "prefix", label: "มีคำนำหน้า" },
+];
+
+function BotRow({ bot, adminFetch, onSaved }: { bot: Bot; adminFetch: AdminFetch; onSaved: (updated: Bot) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [channelId, setChannelId] = useState(bot.line_channel_id);
+  const [replyMode, setReplyMode] = useState<string>(bot.group_reply_mode);
+  const [prefix, setPrefix] = useState("");
+  const [secret, setSecret] = useState("");
+  const [token, setToken] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [detecting, setDetecting] = useState(false);
+  const [detected, setDetected] = useState<DetectedDest[] | null>(null);
+
+  const copyId = async () => {
+    try {
+      await navigator.clipboard.writeText(bot.line_channel_id);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      /* clipboard blocked — ignore */
+    }
+  };
+
+  const detect = async () => {
+    setDetecting(true);
+    setErr(null);
+    try {
+      const j = await adminFetch("/api/admin/recent-destinations");
+      setDetected((j.destinations ?? []) as DetectedDest[]);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "ดึงข้อมูลไม่สำเร็จ");
+    } finally {
+      setDetecting(false);
+    }
+  };
+
+  const save = async () => {
+    if (!channelId.trim()) {
+      setErr("Bot User ID ห้ามว่าง");
+      return;
+    }
+    setSaving(true);
+    setErr(null);
+    try {
+      const j = await adminFetch("/api/admin/bots", {
+        method: "PATCH",
+        body: JSON.stringify({
+          id: bot.id,
+          line_channel_id: channelId.trim(),
+          group_reply_mode: replyMode,
+          default_prefix: replyMode === "prefix" ? prefix.trim() : undefined,
+          channel_secret: secret.trim() || undefined,
+          access_token: token.trim() || undefined,
+        }),
+      });
+      onSaved(j.bot as Bot);
+      setSecret("");
+      setToken("");
+      setDetected(null);
+      setEditing(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+          flexWrap: "wrap",
+          padding: "8px 0",
+          borderBottom: `1px solid ${COLORS.border}`,
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 11, color: COLORS.textMuted }}>Bot User ID</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <code style={{ color: COLORS.blue, wordBreak: "break-all", fontSize: 13 }}>{bot.line_channel_id}</code>
+            <button
+              type="button"
+              onClick={copyId}
+              style={{ border: "none", background: "transparent", color: COLORS.textMuted, cursor: "pointer", fontSize: 12 }}
+            >
+              {copied ? "✓ คัดลอกแล้ว" : "📋 คัดลอก"}
+            </button>
+          </div>
+          <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 2 }}>
+            โหมด: {REPLY_MODES.find((m) => m.key === bot.group_reply_mode)?.label ?? bot.group_reply_mode} ·{" "}
+            <span style={{ color: bot.active ? COLORS.green : COLORS.danger }}>{bot.active ? "● active" : "○ inactive"}</span>
+          </div>
+        </div>
+        <Button variant="ghost" onClick={() => setEditing(true)}>
+          ✏️ แก้ไข
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 12,
+        padding: 14,
+        borderRadius: 12,
+        background: "var(--surface-2)",
+        border: `1px solid ${COLORS.blue}`,
+        marginBottom: 8,
+      }}
+    >
+      <div>
+        <label style={{ fontSize: 12, fontWeight: 600 }}>Bot User ID (destination)</label>
+        <TextInput value={channelId} onChange={(e) => setChannelId(e.target.value)} placeholder="U0a1b2c3..." />
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={detect}
+            disabled={detecting}
+            style={{
+              padding: "6px 12px",
+              borderRadius: 8,
+              border: `1px solid ${COLORS.blue}`,
+              background: "transparent",
+              color: COLORS.blue,
+              fontWeight: 600,
+              fontSize: 12,
+              cursor: detecting ? "default" : "pointer",
+              opacity: detecting ? 0.6 : 1,
+            }}
+          >
+            {detecting ? "กำลังตรวจ..." : "🔍 ตรวจจาก webhook ล่าสุด"}
+          </button>
+          <span style={{ fontSize: 11, color: COLORS.textMuted }}>ทักบอท 1 ข้อความ แล้วกดตรวจ → เลือกตัวที่ถูก</span>
+        </div>
+        {detected && detected.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+            {detected.map((d) => (
+              <button
+                key={d.destination}
+                type="button"
+                onClick={() => setChannelId(d.destination)}
+                style={{
+                  textAlign: "left",
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: `1px solid ${d.matched ? COLORS.border : COLORS.green}`,
+                  background: "transparent",
+                  cursor: "pointer",
+                }}
+              >
+                <code style={{ color: COLORS.textMain, fontSize: 12, wordBreak: "break-all" }}>{d.destination}</code>
+                <span style={{ fontSize: 11, color: d.matched ? COLORS.textMuted : COLORS.green, marginLeft: 8 }}>
+                  {d.matched ? "ผูกแล้ว" : "✅ ยังไม่ผูก"}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div>
+        <label style={{ fontSize: 12, fontWeight: 600 }}>โหมดตอบในกลุ่ม</label>
+        <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+          {REPLY_MODES.map((m) => {
+            const on = replyMode === m.key;
+            return (
+              <button
+                key={m.key}
+                type="button"
+                onClick={() => setReplyMode(m.key)}
+                style={{
+                  padding: "7px 12px",
+                  borderRadius: 8,
+                  border: `1px solid ${on ? COLORS.blue : COLORS.border}`,
+                  background: on ? "var(--primary-weak)" : "transparent",
+                  color: on ? COLORS.blue : COLORS.textMuted,
+                  fontWeight: 600,
+                  fontSize: 12,
+                  cursor: "pointer",
+                }}
+              >
+                {m.label}
+              </button>
+            );
+          })}
+        </div>
+        {replyMode === "prefix" && (
+          <div style={{ marginTop: 8 }}>
+            <TextInput value={prefix} onChange={(e) => setPrefix(e.target.value)} placeholder="คำนำหน้า เช่น /บอท" />
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <div>
+          <label style={{ fontSize: 12, fontWeight: 600 }}>Channel Secret</label>
+          <TextInput type="password" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="เว้นว่าง = ไม่เปลี่ยน" autoComplete="off" />
+        </div>
+        <div>
+          <label style={{ fontSize: 12, fontWeight: 600 }}>Access Token</label>
+          <TextInput type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="เว้นว่าง = ไม่เปลี่ยน" autoComplete="off" />
+        </div>
+      </div>
+
+      {err && <div style={{ color: COLORS.danger, fontSize: 13 }}>{err}</div>}
+
+      <div style={{ display: "flex", gap: 10 }}>
+        <Button variant="primary" onClick={save} disabled={saving}>
+          {saving ? "กำลังบันทึก…" : "บันทึก"}
+        </Button>
+        <Button
+          variant="ghost"
+          onClick={() => {
+            setEditing(false);
+            setChannelId(bot.line_channel_id);
+            setReplyMode(bot.group_reply_mode);
+            setSecret("");
+            setToken("");
+            setErr(null);
+            setDetected(null);
+          }}
+        >
+          ยกเลิก
+        </Button>
+      </div>
+    </div>
   );
 }

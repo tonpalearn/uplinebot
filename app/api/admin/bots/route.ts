@@ -19,6 +19,10 @@ export const dynamic = "force-dynamic";
  *
  * POST  create a bot (channel_secret + access_token are stored ENCRYPTED; never returned).
  * GET   ?tenant_id=... list a tenant's bots WITHOUT any secrets.
+ * PATCH edit an existing bot by id — fix the Bot User ID (line_channel_id), switch reply mode,
+ *       or re-enter secret/token (re-encrypted). Only provided fields change; blank secret/token
+ *       leave the stored ones untouched. Lets the operator fix a wrong Bot User ID in place
+ *       (a common onboarding mistake) instead of deleting + recreating the customer.
  */
 
 interface CreateBotBody {
@@ -135,4 +139,78 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   }
 
   return NextResponse.json({ ok: true, bots: bots ?? [] });
+}
+
+interface UpdateBotBody {
+  id: string;
+  line_channel_id?: string;
+  group_reply_mode?: "mention_only" | "prefix" | "all";
+  default_prefix?: string | null;
+  channel_secret?: string; // blank/omitted → keep the stored one
+  access_token?: string; // blank/omitted → keep the stored one
+  active?: boolean;
+}
+
+export async function PATCH(req: NextRequest): Promise<NextResponse> {
+  try {
+    requireAdmin(req);
+  } catch (err) {
+    if (err instanceof AdminAuthError) {
+      return NextResponse.json({ ok: false, reason: "unauthorized" }, { status: 401 });
+    }
+    throw err;
+  }
+
+  let body: UpdateBotBody;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ ok: false, reason: "invalid_json" }, { status: 400 });
+  }
+
+  const id = typeof body.id === "string" ? body.id.trim() : "";
+  if (!id) return NextResponse.json({ ok: false, reason: "id is required" }, { status: 400 });
+
+  if (body.group_reply_mode && !GROUP_REPLY_MODES.includes(body.group_reply_mode)) {
+    return NextResponse.json(
+      { ok: false, reason: "group_reply_mode must be one of mention_only|prefix|all" },
+      { status: 400 }
+    );
+  }
+
+  // Build a patch from ONLY the provided fields; secrets are re-encrypted iff a non-empty
+  // value is supplied (so leaving them blank in the UI keeps the existing credentials).
+  const patch: Record<string, unknown> = {};
+  if (typeof body.line_channel_id === "string" && body.line_channel_id.trim()) {
+    patch.line_channel_id = body.line_channel_id.trim();
+  }
+  if (body.group_reply_mode) patch.group_reply_mode = body.group_reply_mode;
+  if (body.default_prefix !== undefined) {
+    patch.default_prefix = body.default_prefix ? String(body.default_prefix).trim() : null;
+  }
+  if (typeof body.active === "boolean") patch.active = body.active;
+  if (typeof body.channel_secret === "string" && body.channel_secret.trim()) {
+    patch.channel_secret_enc = encrypt(body.channel_secret.trim());
+  }
+  if (typeof body.access_token === "string" && body.access_token.trim()) {
+    patch.access_token_enc = encrypt(body.access_token.trim());
+  }
+
+  if (Object.keys(patch).length === 0) {
+    return NextResponse.json({ ok: false, reason: "no updatable fields provided" }, { status: 400 });
+  }
+
+  const supabase = getServiceClient();
+  const { data: bot, error } = await supabase
+    .from("upl_bots")
+    .update(patch)
+    .eq("id", id)
+    // never return the *_enc secret columns
+    .select("id, tenant_id, line_channel_id, group_reply_mode, allowed_group_ids, default_prefix, active, created_at")
+    .maybeSingle();
+
+  if (error) return NextResponse.json({ ok: false, reason: error.message }, { status: 500 });
+  if (!bot) return NextResponse.json({ ok: false, reason: "not_found" }, { status: 404 });
+
+  return NextResponse.json({ ok: true, bot });
 }
