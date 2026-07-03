@@ -207,6 +207,32 @@ export default function OnboardingPage() {
   const [botError, setBotError] = useState<string | null>(null);
   const [botDone, setBotDone] = useState(false);
 
+  // "ตรวจ Bot User ID" helper — reads the `destination` values LINE has actually sent
+  // (via /api/admin/recent-destinations) so the operator copies the real ID instead of
+  // hunting in the console. A destination not yet connected as a bot = the one being added.
+  type DetectedDest = { destination: string; count: number; latest: string; matched: boolean };
+  const [detecting, setDetecting] = useState(false);
+  const [detected, setDetected] = useState<DetectedDest[] | null>(null);
+  const [detectError, setDetectError] = useState<string | null>(null);
+  const detectBotId = async () => {
+    setDetecting(true);
+    setDetectError(null);
+    try {
+      const json = await adminFetch("/api/admin/recent-destinations");
+      setDetected((json.destinations ?? []) as DetectedDest[]);
+    } catch (err) {
+      setDetectError(
+        err instanceof AdminApiError && err.unauthorized
+          ? err.message
+          : err instanceof Error
+          ? err.message
+          : "ดึงข้อมูลไม่สำเร็จ"
+      );
+    } finally {
+      setDetecting(false);
+    }
+  };
+
   const submitBot = async () => {
     setBotError(null);
     if (!tenant) {
@@ -499,6 +525,95 @@ export default function OnboardingPage() {
                   <code style={{ color: COLORS.blue }}>destination</code> ที่ LINE ส่งมาใน webhook
                   ใช้ route ไปยังลูกค้าที่ถูกต้อง
                 </Help>
+
+                {/* ตรวจ Bot User ID จาก webhook ล่าสุด (กันหยิบ U ผิดตัว) */}
+                <div style={{ marginTop: 10 }}>
+                  <button
+                    type="button"
+                    onClick={detectBotId}
+                    disabled={detecting}
+                    style={{
+                      padding: "8px 14px",
+                      borderRadius: 8,
+                      border: `1px solid ${COLORS.blue}`,
+                      background: "transparent",
+                      color: COLORS.blue,
+                      fontWeight: 600,
+                      fontSize: 13,
+                      cursor: detecting ? "default" : "pointer",
+                      opacity: detecting ? 0.6 : 1,
+                    }}
+                  >
+                    {detecting ? "กำลังตรวจ..." : "🔍 ตรวจจาก webhook ล่าสุด"}
+                  </button>
+                  <Help>
+                    วาง Webhook URL (Step 3) + เปิด Use webhook ในคอนโซลก่อน แล้ว<b>ทักบอทในไลน์ 1 ข้อความ</b> จากนั้นกดปุ่มนี้ — ระบบจะโชว์ Bot User ID จริงที่ LINE ส่งมาให้ก๊อป
+                  </Help>
+
+                  {detectError && (
+                    <div style={{ color: COLORS.danger, fontSize: 13, marginTop: 6 }}>{detectError}</div>
+                  )}
+
+                  {detected && detected.length === 0 && (
+                    <div style={{ color: COLORS.textMuted, fontSize: 13, marginTop: 6 }}>
+                      ยังไม่มีข้อความเข้ามา — ทักบอทในไลน์ 1 ครั้งแล้วกดตรวจใหม่
+                    </div>
+                  )}
+
+                  {detected && detected.length > 0 && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
+                      {detected.map((d) => (
+                        <div
+                          key={d.destination}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 10,
+                            flexWrap: "wrap",
+                            padding: "8px 12px",
+                            borderRadius: 8,
+                            border: `1px solid ${d.matched ? COLORS.border : COLORS.green}`,
+                            background: "var(--surface-2)",
+                          }}
+                        >
+                          <div style={{ minWidth: 0 }}>
+                            <code style={{ color: COLORS.textMain, fontSize: 13, wordBreak: "break-all" }}>
+                              {d.destination}
+                            </code>
+                            <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 2 }}>
+                              เข้ามา {d.count} ครั้ง ·{" "}
+                              {d.matched ? (
+                                <span>ผูกกับบอทแล้ว</span>
+                              ) : (
+                                <span style={{ color: COLORS.green, fontWeight: 600 }}>
+                                  ✅ ยังไม่ผูก — น่าจะเป็นตัวนี้
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setBotUserId(d.destination)}
+                            style={{
+                              padding: "6px 12px",
+                              borderRadius: 8,
+                              border: "none",
+                              background: COLORS.blue,
+                              color: "var(--primary-fg)",
+                              fontWeight: 700,
+                              fontSize: 12,
+                              cursor: "pointer",
+                              flex: "0 0 auto",
+                            }}
+                          >
+                            ใช้ค่านี้
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div>
