@@ -257,10 +257,17 @@ describe("(1) parseTodoIntent", () => {
     expect(parseTodoIntent("เพิ่มเติมรายละเอียด")).toBeNull();
   });
 
-  it("ค้าง (primary) + งานวันนี้ / รายการ / list / todo → list", () => {
-    for (const kw of ["ค้าง", "งานค้าง", "ดูงาน", "งานวันนี้", "รายการ", "list", "todo"]) {
+  it("ค้าง (primary) + งานวันนี้ / รายการงาน / todo → list", () => {
+    for (const kw of ["ค้าง", "งานค้าง", "ดูงาน", "งานวันนี้", "รายการงาน", "todo"]) {
       expect(parseTodoIntent(kw)).toEqual({ action: "list" });
     }
+  });
+
+  it("bare 'รายการ' / 'list' are NOT todo — they belong to the Expense Tracker (ledger list)", () => {
+    // Assistant runs before expense_tracker in ROUTER_PRIORITY, so Todo must NOT claim these
+    // or it would shadow the ledger's list command. Task-specific 'รายการงาน' stays with Todo.
+    expect(parseTodoIntent("รายการ")).toBeNull();
+    expect(parseTodoIntent("list")).toBeNull();
   });
 
   it("ปิดงาน: ลบ N / เสร็จ N (single and multiple) → done with indexes", () => {

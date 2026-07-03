@@ -374,8 +374,11 @@ export function parseTodoIntent(text: string): ParsedTodoIntent | null {
     }
   }
 
-  // ดูงานค้าง: "ค้าง" (primary) + aliases
-  if (/^(ค้าง|งานค้าง|ดูงาน|งานวันนี้|รายการ|รายการงาน|list|todo|รีเฟรช|relist)$/i.test(firstLine)) {
+  // ดูงานค้าง: "ค้าง" (primary) + aliases.
+  // NOTE: bare "รายการ"/"list" are intentionally NOT here — they belong to the Expense Tracker
+  // module (ledger list). Assistant runs before expense_tracker in ROUTER_PRIORITY, so keeping
+  // them here would let Todo steal "รายการ". Task-specific "รายการงาน"/"todo" stay with Todo.
+  if (/^(ค้าง|งานค้าง|ดูงาน|งานวันนี้|รายการงาน|todo|รีเฟรช|relist)$/i.test(firstLine)) {
     return { action: "list" };
   }
 
