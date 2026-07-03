@@ -1,19 +1,14 @@
 "use client";
 
-// Admin Dashboard — Module Catalog (SPEC.md §6.2, §6, §7).
-// TODO: still missing per §6.2 — Bot/Channel Manager, Logs & Analytics,
-// Free Trial banner, Guided Onboarding checklist. This pass covers the
-// Module Catalog UI (toggle+buy) only.
+// Admin Dashboard — a READ-ONLY Module Catalog overview (SPEC.md §6, §7).
+// Enabling a module is per-customer and lives on /customers (needs a tenant + admin
+// token), and creating a customer lives on /onboarding — this page only shows the
+// catalog + prices and links to those.
 
 import { useEffect, useState } from "react";
 import ModuleCatalogCard, {
   type ModuleCatalogItem,
 } from "./components/ModuleCatalogCard";
-
-// TODO: hardcoded tenant id for this pass — replace with the tenant id
-// derived from the authenticated admin session once Supabase Auth is wired
-// up on the Dashboard (see app/api/admin/subscriptions/route.ts note).
-const TENANT_ID_TODO = "00000000-0000-0000-0000-000000000001";
 
 const COLORS = {
   pageBg: "#0a0e17",
@@ -60,23 +55,6 @@ export default function DashboardPage() {
     };
   }, []);
 
-  const handleEnable = async (moduleKey: string) => {
-    const res = await fetch("/api/admin/subscriptions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        tenant_id: TENANT_ID_TODO,
-        module_key: moduleKey,
-        billing_mode: "addon",
-      }),
-    });
-    const json = await res.json();
-    if (!json.ok) {
-      return { ok: false, reason: json.reason ?? "เปิดใช้งานไม่สำเร็จ" };
-    }
-    return { ok: true };
-  };
-
   return (
     <main
       style={{
@@ -96,7 +74,7 @@ export default function DashboardPage() {
                 UP Line — Admin Dashboard
               </h1>
               <p style={{ color: COLORS.textMuted, marginTop: 6, fontSize: 14 }}>
-                Module Catalog — เปิด/ปิดและซื้อโมดูลเพิ่มแบบ à la carte
+                Module Catalog — โมดูลทั้งหมด + ราคา (à la carte) · เปิดใช้ต่อลูกค้าที่หน้า “จัดการลูกค้า”
               </p>
             </div>
             <div style={{ flex: "0 0 auto", display: "flex", gap: 10 }}>
@@ -151,9 +129,6 @@ export default function DashboardPage() {
               </a>
             </div>
           </div>
-          <p style={{ color: "#665a33", background: "rgba(242,193,78,0.08)", display: "inline-block", marginTop: 10, padding: "4px 10px", borderRadius: 8, fontSize: 12 }}>
-            TODO: ใช้ hardcoded tenant_id ชั่วคราว — รอผูก Supabase Auth session จริง
-          </p>
         </header>
 
         {loading && <p style={{ color: COLORS.textMuted }}>กำลังโหลดโมดูล...</p>}
@@ -171,7 +146,7 @@ export default function DashboardPage() {
             }}
           >
             {modules.map((m) => (
-              <ModuleCatalogCard key={m.module_key} module={m} onEnable={handleEnable} />
+              <ModuleCatalogCard key={m.module_key} module={m} />
             ))}
           </div>
         )}

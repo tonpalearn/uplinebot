@@ -1,7 +1,5 @@
 "use client";
 
-import { useState } from "react";
-
 export interface ModuleCatalogItem {
   module_key: string;
   name: string;
@@ -24,34 +22,13 @@ const COLORS = {
   textMain: "#eef1f7",
 };
 
-export default function ModuleCatalogCard({
-  module,
-  onEnable,
-}: {
-  module: ModuleCatalogItem;
-  onEnable: (moduleKey: string) => Promise<{ ok: boolean; reason?: string }>;
-}) {
-  const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
+/**
+ * Read-only catalog card. Enabling a module is per-CUSTOMER and lives on the
+ * "จัดการลูกค้า" (/customers) page (needs a tenant + the admin token), so this card
+ * only displays the module + tier + price.
+ */
+export default function ModuleCatalogCard({ module }: { module: ModuleCatalogItem }) {
   const isHighlight = module.module_key === HIGHLIGHT_KEY;
-
-  const handleClick = async () => {
-    setStatus("loading");
-    setErrorMsg(null);
-    try {
-      const res = await onEnable(module.module_key);
-      if (res.ok) {
-        setStatus("success");
-      } else {
-        setStatus("error");
-        setErrorMsg(res.reason ?? "เกิดข้อผิดพลาด");
-      }
-    } catch (err) {
-      setStatus("error");
-      setErrorMsg(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
-    }
-  };
 
   return (
     <div
@@ -128,40 +105,18 @@ export default function ModuleCatalogCard({
         </span>
       </div>
 
-      <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
-        <button
-          onClick={handleClick}
-          disabled={status === "loading" || module.is_core}
-          style={{
-            width: "100%",
-            padding: "10px 14px",
-            borderRadius: 10,
-            border: "none",
-            fontWeight: 600,
-            fontSize: 14,
-            cursor: module.is_core ? "default" : "pointer",
-            background: module.is_core
-              ? "rgba(255,255,255,0.06)"
-              : isHighlight
-              ? COLORS.gold
-              : COLORS.blue,
-            color: module.is_core ? COLORS.textMuted : "#0a0e17",
-            opacity: status === "loading" ? 0.6 : 1,
-          }}
-        >
-          {module.is_core
-            ? "รวมอยู่แล้ว"
-            : status === "loading"
-            ? "กำลังเปิดใช้งาน..."
-            : "เปิดใช้งาน"}
-        </button>
-
-        {status === "success" && (
-          <span style={{ fontSize: 12, color: COLORS.green }}>เปิดใช้งานสำเร็จ</span>
-        )}
-        {status === "error" && (
-          <span style={{ fontSize: 12, color: "#ff6b6b" }}>ผิดพลาด: {errorMsg}</span>
-        )}
+      <div
+        style={{
+          marginTop: "auto",
+          fontSize: 12,
+          color: COLORS.textMuted,
+          borderTop: `1px solid ${COLORS.border}`,
+          paddingTop: 10,
+        }}
+      >
+        {module.is_core
+          ? "รวมอยู่ในระบบทุกลูกค้า"
+          : "เปิดให้ลูกค้าที่หน้า “จัดการลูกค้า”"}
       </div>
     </div>
   );
