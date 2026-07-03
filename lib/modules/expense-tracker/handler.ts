@@ -13,12 +13,13 @@ import { getOrCreateLedgerToken, ledgerReportUrl } from "../../ledger-token";
  * Assistant's todos are target-scoped). Categorization is 100% rule-based (no LLM).
  *
  * UX (parseLedgerIntent decides which):
- *   - record  : พิมพ์รายการ (มีจำนวนเงิน) เช่น "กาแฟ 50" / "+เงินเดือน 30000" / หลายบรรทัด/คั่น ,
+ *   - record  : ขึ้นต้นด้วย "จด" แล้วพิมพ์รายการต่อทีละบรรทัด/คั่น , เช่น "จด กาแฟ 50" หรือ
+ *               "จด\nกาแฟ 50\nเงินเดือน 30000" — ต้องมี "จด" นำหน้าเสมอ (กันจดข้อความทั่วไป เช่น "555")
  *   - summary : "สรุปวันนี้" / "สัปดาห์" / "เดือน" → การ์ดกราฟ Flex
  *   - list    : "รายการ" / "ลิสต์" / "list"        → การ์ดลิสต์รายการวันนี้ (เรียบง่าย ไม่มีกราฟ)
  *   - report  : "รายงาน" / "report" / "กราฟ"      → ลิงก์หน้าเว็บ /ledger/<token>
  *   - undo    : "ยกเลิก" / "ลบล่าสุด" / "undo"      → soft-delete รายการล่าสุด
- * ข้อความอื่นที่ไม่มีจำนวนเงิน → ไม่แมตช์ (บอทเงียบ ไม่จดขยะ). "ลบ" เดี่ยวเป็นของโมดูล todo.
+ * ข้อความที่ไม่ใช่คำสั่งและไม่ขึ้นต้น "จด" → ไม่แมตช์ (บอทเงียบ). "ลบ" เดี่ยวเป็นของโมดูล todo.
  */
 
 export const ExpenseTrackerModule: ModuleHandler = {
@@ -37,6 +38,16 @@ export const ExpenseTrackerModule: ModuleHandler = {
 
     switch (intent.action) {
       case "record": {
+        // พิมพ์ "จด" แต่ยังไม่มีรายการที่อ่านออก → แนะนำวิธีพิมพ์ (แทนที่จะเงียบ)
+        if (intent.entries.length === 0) {
+          return [
+            {
+              type: "text",
+              text: 'พิมพ์ "จด" แล้วตามด้วยรายการทีละบรรทัดได้เลย เช่น\nจด\nกาแฟ 50\nเงินเดือน 30000\n(รายรับใส่ + นำหน้า)',
+              quickReply: ledgerQuickReply(),
+            },
+          ];
+        }
         const inserted = await addEntries(ctx.targetId, intent.entries);
         if (inserted.length === 0) return [];
         return [buildRecordConfirm(inserted)];

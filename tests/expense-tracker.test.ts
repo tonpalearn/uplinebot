@@ -24,9 +24,9 @@ const NOW = new Date("2026-07-03T05:00:00Z");
 
 // ── parseLedgerIntent ─────────────────────────────────────────────────────────────────────
 
-describe("parseLedgerIntent — record (expense/income basics)", () => {
-  it("basic expense 'กาแฟ 50' → one expense entry, amount 50", () => {
-    const intent = parseLedgerIntent("กาแฟ 50", NOW);
+describe("parseLedgerIntent — record (needs 'จด' prefix)", () => {
+  it("basic expense 'จด กาแฟ 50' → one expense entry, amount 50", () => {
+    const intent = parseLedgerIntent("จด กาแฟ 50", NOW);
     expect(intent?.action).toBe("record");
     if (intent?.action !== "record") throw new Error("expected record");
     expect(intent.entries).toHaveLength(1);
@@ -36,89 +36,120 @@ describe("parseLedgerIntent — record (expense/income basics)", () => {
     expect(e.item).toContain("กาแฟ");
   });
 
-  it("income via leading '+' : '+เงินเดือน 30000'", () => {
-    const intent = parseLedgerIntent("+เงินเดือน 30000", NOW);
+  it("income via leading '+' : 'จด +เงินเดือน 30000'", () => {
+    const intent = parseLedgerIntent("จด +เงินเดือน 30000", NOW);
     if (intent?.action !== "record") throw new Error("expected record");
     expect(intent.entries[0].kind).toBe("income");
     expect(intent.entries[0].amount).toBe(30000);
   });
 
-  it("income via keyword (no sign) : 'เงินเดือน 30000'", () => {
-    const intent = parseLedgerIntent("เงินเดือน 30000", NOW);
+  it("income via keyword (no sign) : 'จด เงินเดือน 30000'", () => {
+    const intent = parseLedgerIntent("จด เงินเดือน 30000", NOW);
     if (intent?.action !== "record") throw new Error("expected record");
     expect(intent.entries[0].kind).toBe("income");
     expect(intent.entries[0].amount).toBe(30000);
   });
 
-  it("expense via leading '-' : '-50 ค่ากาแฟ'", () => {
-    const intent = parseLedgerIntent("-50 ค่ากาแฟ", NOW);
+  it("expense via leading '-' : 'จด -50 ค่ากาแฟ'", () => {
+    const intent = parseLedgerIntent("จด -50 ค่ากาแฟ", NOW);
     if (intent?.action !== "record") throw new Error("expected record");
     expect(intent.entries[0].kind).toBe("expense");
     expect(intent.entries[0].amount).toBe(50);
   });
 
-  it("multiplier 'k' : 'ค่าเช่า 5k' → 5000", () => {
-    const intent = parseLedgerIntent("ค่าเช่า 5k", NOW);
+  it("multiplier 'k' : 'จด ค่าเช่า 5k' → 5000", () => {
+    const intent = parseLedgerIntent("จด ค่าเช่า 5k", NOW);
     if (intent?.action !== "record") throw new Error("expected record");
     expect(intent.entries[0].amount).toBe(5000);
     expect(intent.entries[0].kind).toBe("expense");
   });
 
-  it("multiplier 'หมื่น' : 'โบนัส 2หมื่น' → 20000 income", () => {
-    const intent = parseLedgerIntent("โบนัส 2หมื่น", NOW);
+  it("multiplier 'หมื่น' : 'จด โบนัส 2หมื่น' → 20000 income", () => {
+    const intent = parseLedgerIntent("จด โบนัส 2หมื่น", NOW);
     if (intent?.action !== "record") throw new Error("expected record");
     expect(intent.entries[0].amount).toBe(20000);
     expect(intent.entries[0].kind).toBe("income");
   });
 
-  it("multi-line + comma : 'ข้าว 60, กาแฟ 40\\nน้ำมัน 500' → 3 entries", () => {
-    const intent = parseLedgerIntent("ข้าว 60, กาแฟ 40\nน้ำมัน 500", NOW);
+  it("first item on the SAME line as จด + comma + next line → 3 entries", () => {
+    const intent = parseLedgerIntent("จด ข้าว 60, กาแฟ 40\nน้ำมัน 500", NOW);
     if (intent?.action !== "record") throw new Error("expected record");
     expect(intent.entries).toHaveLength(3);
     expect(intent.entries.map((e) => e.amount)).toEqual([60, 40, 500]);
   });
 
-  it("note after '#' : 'กาแฟ 50 # ร้านโปรด' → note has ร้านโปรด, item has no #", () => {
-    const intent = parseLedgerIntent("กาแฟ 50 # ร้านโปรด", NOW);
+  it("'จด' on its own line, items on the following lines → 2 entries", () => {
+    const intent = parseLedgerIntent("จด\nกาแฟ 50\nเงินเดือน 30000", NOW);
+    if (intent?.action !== "record") throw new Error("expected record");
+    expect(intent.entries).toHaveLength(2);
+    expect(intent.entries[0].amount).toBe(50);
+    expect(intent.entries[1].kind).toBe("income");
+  });
+
+  it("note after '#' : 'จด กาแฟ 50 # ร้านโปรด' → note has ร้านโปรด, item has no #", () => {
+    const intent = parseLedgerIntent("จด กาแฟ 50 # ร้านโปรด", NOW);
     if (intent?.action !== "record") throw new Error("expected record");
     const e = intent.entries[0];
     expect(e.note).toContain("ร้านโปรด");
     expect(e.item).not.toContain("#");
     expect(e.item).not.toContain("ร้านโปรด");
   });
+
+  it("'จด' alone → record with 0 entries (handler then shows a how-to hint)", () => {
+    const intent = parseLedgerIntent("จด", NOW);
+    expect(intent?.action).toBe("record");
+    if (intent?.action !== "record") throw new Error("expected record");
+    expect(intent.entries).toHaveLength(0);
+  });
+});
+
+describe("parseLedgerIntent — 'จด' prefix is REQUIRED to record", () => {
+  it("bare 'กาแฟ 50' (no จด) → null — ordinary chat is never recorded", () => {
+    expect(parseLedgerIntent("กาแฟ 50", NOW)).toBeNull();
+  });
+  it("'555' (Thai laughter) → null", () => {
+    expect(parseLedgerIntent("555", NOW)).toBeNull();
+  });
+  it("'จดหมาย 50' → null (จด+หมาย, no boundary → not a record prefix)", () => {
+    expect(parseLedgerIntent("จดหมาย 50", NOW)).toBeNull();
+  });
 });
 
 describe("parseLedgerIntent — backdating (deterministic with fixed NOW)", () => {
-  it("'กาแฟ 50 เมื่อวาน' → occurredOn 2026-07-02", () => {
-    const intent = parseLedgerIntent("กาแฟ 50 เมื่อวาน", NOW);
+  it("'จด กาแฟ 50 เมื่อวาน' → occurredOn 2026-07-02", () => {
+    const intent = parseLedgerIntent("จด กาแฟ 50 เมื่อวาน", NOW);
     if (intent?.action !== "record") throw new Error("expected record");
     expect(intent.entries[0].occurredOn).toBe("2026-07-02");
   });
 
-  it("'ข้าว 60 วานซืน' → occurredOn 2026-07-01", () => {
-    const intent = parseLedgerIntent("ข้าว 60 วานซืน", NOW);
+  it("'จด ข้าว 60 วานซืน' → occurredOn 2026-07-01", () => {
+    const intent = parseLedgerIntent("จด ข้าว 60 วานซืน", NOW);
     if (intent?.action !== "record") throw new Error("expected record");
     expect(intent.entries[0].occurredOn).toBe("2026-07-01");
   });
 
   it("no date word → occurredOn defaults to today 2026-07-03", () => {
-    const intent = parseLedgerIntent("กาแฟ 50", NOW);
+    const intent = parseLedgerIntent("จด กาแฟ 50", NOW);
     if (intent?.action !== "record") throw new Error("expected record");
     expect(intent.entries[0].occurredOn).toBe("2026-07-03");
   });
 });
 
 describe("parseLedgerIntent — unit guard (numbers that are not money)", () => {
-  it("'ประชุม 10 โมง' → null (time, not an amount)", () => {
-    expect(parseLedgerIntent("ประชุม 10 โมง", NOW)).toBeNull();
+  it("'จด ประชุม 10 โมง' → record with 0 entries (time guarded out)", () => {
+    const intent = parseLedgerIntent("จด ประชุม 10 โมง", NOW);
+    if (intent?.action !== "record") throw new Error("expected record");
+    expect(intent.entries).toHaveLength(0);
   });
 
-  it("'มา 3 คน' → null (headcount, not an amount)", () => {
-    expect(parseLedgerIntent("มา 3 คน", NOW)).toBeNull();
+  it("'จด มา 3 คน' → record with 0 entries (headcount guarded out)", () => {
+    const intent = parseLedgerIntent("จด มา 3 คน", NOW);
+    if (intent?.action !== "record") throw new Error("expected record");
+    expect(intent.entries).toHaveLength(0);
   });
 
-  it("'ค่าปรับ 500 บาท' → recorded (บาท forces money)", () => {
-    const intent = parseLedgerIntent("ค่าปรับ 500 บาท", NOW);
+  it("'จด ค่าปรับ 500 บาท' → recorded (บาท forces money)", () => {
+    const intent = parseLedgerIntent("จด ค่าปรับ 500 บาท", NOW);
     if (intent?.action !== "record") throw new Error("expected record");
     expect(intent.entries[0].amount).toBe(500);
     expect(intent.entries[0].kind).toBe("expense");
@@ -205,8 +236,8 @@ describe("parseLedgerIntent — list command (NEW)", () => {
     expect(parseLedgerIntent("วันนี้", NOW)).toEqual({ action: "summary", period: "day" });
   });
 
-  it("regression: 'กาแฟ 50' still → record (a plain entry, not a list command)", () => {
-    const intent = parseLedgerIntent("กาแฟ 50", NOW);
+  it("regression: 'จด กาแฟ 50' still → record (not a list command)", () => {
+    const intent = parseLedgerIntent("จด กาแฟ 50", NOW);
     expect(intent?.action).toBe("record");
     if (intent?.action !== "record") throw new Error("expected record");
     expect(intent.entries).toHaveLength(1);

@@ -165,7 +165,7 @@ export function buildEntryListFlex(entries: LedgerRow[], opts: EntryListFlexOpts
   if (entries.length === 0) {
     return {
       type: "text",
-      text: "ยังไม่มีรายการวันนี้ พิมพ์ เช่น 'กาแฟ 50' เพื่อบันทึก",
+      text: "ยังไม่มีรายการวันนี้ — พิมพ์ \"จด\" แล้วตามด้วยรายการ เช่น จด กาแฟ 50",
       quickReply: ledgerQuickReply(),
     };
   }
