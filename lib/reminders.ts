@@ -20,17 +20,35 @@ const BATCH_LIMIT = 300;
 // How many LINE pushes run concurrently. Keeps the whole batch well under the serverless
 // function time limit while not hammering the LINE API with hundreds of parallel calls.
 const PUSH_CONCURRENCY = 25;
+// Upper bound on the "remind before" lead (24h). Also the look-ahead window: we fetch tasks
+// due within [now, now + MAX_LEAD] and then fire only those whose (due_at - lead) has passed.
+export const MAX_LEAD_MINUTES = 1440;
+
+/** Effective lead (minutes before due) for a task: its own override wins, else the target
+ *  default, else 0. Clamped to [0, MAX_LEAD_MINUTES]. Pure — unit-tested. */
+export function reminderLead(taskOverride: number | null | undefined, targetDefault: number | null | undefined): number {
+  const raw = taskOverride ?? targetDefault ?? 0;
+  if (!Number.isFinite(raw) || raw < 0) return 0;
+  return Math.min(Math.trunc(raw), MAX_LEAD_MINUTES);
+}
+
+/** Whether a task should be reminded now: fire when now >= due_at - lead. Pure — unit-tested. */
+export function isReminderDue(dueAtMs: number, nowMs: number, leadMinutes: number): boolean {
+  return dueAtMs - leadMinutes * 60_000 <= nowMs;
+}
 
 interface DueTodoRow {
   id: string;
   target_id: string;
   content: string;
   due_at: string;
+  remind_before_minutes: number | null;
 }
 
 interface TargetInfo {
   lineSourceId: string;
   botId: string;
+  reminderLeadMinutes: number;
 }
 
 export interface ReminderScanResult {
@@ -40,10 +58,13 @@ export interface ReminderScanResult {
 export async function scanTodoReminders(now: Date = new Date()): Promise<ReminderScanResult> {
   const supabase = getServiceClient();
 
+  // Look-ahead window: fetch tasks due within the next MAX_LEAD_MINUTES (so a task with a lead
+  // time is fetched BEFORE its due moment), then fire only those whose (due_at - lead) has passed.
+  const windowEnd = new Date(now.getTime() + MAX_LEAD_MINUTES * 60_000).toISOString();
   const { data, error } = await supabase
     .from("upl_todos")
-    .select("id, target_id, content, due_at")
-    .lte("due_at", now.toISOString())
+    .select("id, target_id, content, due_at, remind_before_minutes")
+    .lte("due_at", windowEnd)
     .eq("done", false)
     .is("reminded_at", null)
     .order("due_at", { ascending: true })
@@ -53,24 +74,29 @@ export async function scanTodoReminders(now: Date = new Date()): Promise<Reminde
     throw new Error(`Failed to query due todo reminders: ${error.message}`);
   }
 
-  const rows = (data ?? []) as DueTodoRow[];
+  const candidates = (data ?? []) as DueTodoRow[];
   const result: ReminderScanResult = { sent: 0 };
 
   // Per-target and per-bot caches so a burst of due todos in the same chat doesn't refetch.
   const targetCache = new Map<string, TargetInfo | null>();
   const botTokenCache = new Map<string, string | null>();
 
-  // Phase 1 — warm the per-target + per-bot caches (only unique targets/bots are fetched).
-  for (const row of rows) {
+  // Phase 1 — resolve each target (warming caches for the push) AND keep only rows whose
+  // effective remind moment (due_at - lead) has arrived. lead = task override ?? target default.
+  const due: DueTodoRow[] = [];
+  for (const row of candidates) {
     const target = await resolveTarget(row.target_id, targetCache);
-    if (target) await resolveBotToken(target.botId, botTokenCache);
+    if (!target) continue;
+    await resolveBotToken(target.botId, botTokenCache);
+    const lead = reminderLead(row.remind_before_minutes, target.reminderLeadMinutes);
+    if (isReminderDue(Date.parse(row.due_at), now.getTime(), lead)) due.push(row);
   }
 
   // Phase 2 — push + stamp reminded_at in PARALLEL chunks so hundreds of reminders due at the
   // same minute (across many customers) go out in a few seconds instead of one-by-one. Each
   // reminder stays scoped to its own target_id/bot, so customers never cross-contaminate.
-  for (let i = 0; i < rows.length; i += PUSH_CONCURRENCY) {
-    const chunk = rows.slice(i, i + PUSH_CONCURRENCY);
+  for (let i = 0; i < due.length; i += PUSH_CONCURRENCY) {
+    const chunk = due.slice(i, i + PUSH_CONCURRENCY);
     const outcomes = await Promise.all(
       chunk.map((row) => remindOne(row, now, targetCache, botTokenCache))
     );
@@ -94,10 +120,14 @@ async function remindOne(
     const accessToken = botTokenCache.get(target.botId);
     if (!accessToken) return false;
 
+    // Ahead-of-time reminder → "อีก X นาที"; at/after due → "ถึงเวลางาน".
+    const minutesUntil = Math.round((Date.parse(row.due_at) - now.getTime()) / 60_000);
+    const head =
+      minutesUntil >= 1 ? `⏰ ใกล้ถึงกำหนด (อีก ${minutesUntil} นาที)` : "⏰ ถึงเวลางาน";
     const messages: OutboundMessage[] = [
       {
         type: "text",
-        text: `⏰ ถึงเวลางาน: ${row.content} (กำหนด ${formatThaiDueAt(new Date(row.due_at), now)})`,
+        text: `${head}: ${row.content} (กำหนด ${formatThaiDueAt(new Date(row.due_at), now)})`,
       },
     ];
 
@@ -129,14 +159,18 @@ async function resolveTarget(
   const supabase = getServiceClient();
   const { data, error } = await supabase
     .from("upl_targets")
-    .select("line_source_id, bot_id")
+    .select("line_source_id, bot_id, reminder_lead_minutes")
     .eq("id", targetId)
     .maybeSingle();
 
   const info: TargetInfo | null =
     error || !data
       ? null
-      : { lineSourceId: data.line_source_id as string, botId: data.bot_id as string };
+      : {
+          lineSourceId: data.line_source_id as string,
+          botId: data.bot_id as string,
+          reminderLeadMinutes: (data.reminder_lead_minutes as number | null) ?? 0,
+        };
 
   cache.set(targetId, info);
   return info;

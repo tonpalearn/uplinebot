@@ -18,6 +18,8 @@ import {
   type BkkYmd,
   THAI_MONTHS_FULL,
   THAI_WEEKDAYS_SHORT,
+  LEAD_PRESETS,
+  TASK_LEAD_PRESETS,
   bkkYmdOf,
   bkkDow,
   daysInMonth,
@@ -37,6 +39,9 @@ export default function PlanPage({ params }: { params: { token: string } }) {
   const apiBase = `/api/plan/${encodeURIComponent(token)}`;
 
   const [todos, setTodos] = useState<Todo[]>([]);
+  // The TARGET's default reminder lead (minutes before due; 0 = at due time). Tasks without
+  // their own remind_before_minutes override fall back to this.
+  const [leadMinutes, setLeadMinutes] = useState<number>(0);
   const [status, setStatus] = useState<"loading" | "ok" | "invalid" | "error">("loading");
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [now, setNow] = useState<Date>(() => new Date());
@@ -64,6 +69,9 @@ export default function PlanPage({ params }: { params: { token: string } }) {
         return;
       }
       setTodos((json.todos || []) as Todo[]);
+      if (typeof json.reminder_lead_minutes === "number") {
+        setLeadMinutes(json.reminder_lead_minutes);
+      }
       setStatus("ok");
       setErrMsg(null);
     } catch (e) {
@@ -81,7 +89,10 @@ export default function PlanPage({ params }: { params: { token: string } }) {
 
   // Optimistic helpers — mutate local state, then reconcile with the server row it returns.
   const applyPatch = useCallback(
-    async (id: string, patch: Partial<Pick<Todo, "content" | "due_at" | "done" | "sort_order">>) => {
+    async (
+      id: string,
+      patch: Partial<Pick<Todo, "content" | "due_at" | "done" | "sort_order" | "remind_before_minutes">>
+    ) => {
       setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
       try {
         const res = await fetch(apiBase, {
@@ -101,6 +112,32 @@ export default function PlanPage({ params }: { params: { token: string } }) {
       }
     },
     [apiBase, load]
+  );
+
+  // Set the TARGET default lead — PATCH { reminder_lead_minutes } (no id). Optimistic:
+  // flip local state now, revert to the previous value if the server rejects it.
+  const setLead = useCallback(
+    async (next: number) => {
+      const prev = leadMinutes;
+      if (next === prev) return;
+      setLeadMinutes(next);
+      try {
+        const res = await fetch(apiBase, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ reminder_lead_minutes: next }),
+        });
+        const json = await res.json();
+        if (res.ok && json?.ok && typeof json.reminder_lead_minutes === "number") {
+          setLeadMinutes(json.reminder_lead_minutes); // adopt the clamped server value
+        } else {
+          setLeadMinutes(prev); // revert on failure
+        }
+      } catch {
+        setLeadMinutes(prev);
+      }
+    },
+    [apiBase, leadMinutes]
   );
 
   const addTodo = useCallback(
@@ -206,6 +243,12 @@ export default function PlanPage({ params }: { params: { token: string } }) {
                 disabled={status === "loading"}
               />
 
+              <ReminderSetting
+                lead={leadMinutes}
+                onChange={setLead}
+                disabled={status === "loading"}
+              />
+
               <div style={sx.grid2}>
                 <Calendar
                   cursor={cursor}
@@ -226,6 +269,7 @@ export default function PlanPage({ params }: { params: { token: string } }) {
                   onToggle={(t) => applyPatch(t.id, { done: !t.done })}
                   onEdit={(t, content) => applyPatch(t.id, { content })}
                   onReschedule={(t, iso) => applyPatch(t.id, { due_at: iso })}
+                  onRemind={(t, mins) => applyPatch(t.id, { remind_before_minutes: mins })}
                   onDelete={(t) => removeTodo(t.id)}
                   onReorder={reorder}
                   loading={status === "loading"}
@@ -341,6 +385,69 @@ function AddBar({
       <button style={sx.addBtn} onClick={submit} disabled={disabled || busy || !content.trim()}>
         {busy ? "…" : "เพิ่มงาน"}
       </button>
+    </div>
+  );
+}
+
+// ── reminder default setting ────────────────────────────────────────────────────────────
+// Compact "⏰ การเตือน" panel: picks the TARGET's default lead (how long before a task's due
+// time the bot pings LINE). Segmented presets mirror LEAD_PRESETS; the active one is
+// highlighted. Persist happens in the parent's setLead (optimistic PATCH); we just flash a
+// tiny "บันทึกแล้ว" once the selected value settles to what the caller reports back.
+function ReminderSetting({
+  lead,
+  onChange,
+  disabled,
+}: {
+  lead: number;
+  onChange: (mins: number) => void;
+  disabled?: boolean;
+}) {
+  // Show "บันทึกแล้ว" briefly after a change lands. We compare against the last value we
+  // *sent* so the flash only appears for user-driven edits, not the initial GET hydration.
+  const [saved, setSaved] = useState(false);
+  const sentRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (sentRef.current === null || sentRef.current !== lead) return;
+    setSaved(true);
+    const t = setTimeout(() => setSaved(false), 1800);
+    return () => clearTimeout(t);
+  }, [lead]);
+
+  const pick = (value: number) => {
+    if (disabled || value === lead) return;
+    sentRef.current = value;
+    onChange(value);
+  };
+
+  return (
+    <div style={sx.remindWrap}>
+      <div style={sx.remindHead}>
+        <span style={sx.remindTitle}>⏰ เตือนก่อนถึงเวลา</span>
+        {saved && <span style={sx.remindSaved}>✓ บันทึกแล้ว</span>}
+      </div>
+      <div style={sx.segRow}>
+        {LEAD_PRESETS.map((p) => {
+          const active = p.value === lead;
+          return (
+            <button
+              key={p.value}
+              onClick={() => pick(p.value)}
+              disabled={disabled}
+              style={{
+                ...sx.segBtn,
+                ...(active ? sx.segBtnOn : null),
+                cursor: disabled ? "default" : "pointer",
+              }}
+            >
+              {p.label}
+            </button>
+          );
+        })}
+      </div>
+      <p style={sx.remindHelp}>
+        งานที่ไม่ได้ตั้งเฉพาะจะเตือนก่อนถึงเวลาตามนี้ · ตั้งเฉพาะรายงานได้ในแต่ละงาน
+      </p>
     </div>
   );
 }
@@ -499,6 +606,7 @@ function TaskList({
   onToggle,
   onEdit,
   onReschedule,
+  onRemind,
   onDelete,
   onReorder,
   loading,
@@ -512,6 +620,7 @@ function TaskList({
   onToggle: (t: Todo) => void;
   onEdit: (t: Todo, content: string) => void;
   onReschedule: (t: Todo, iso: string | null) => void;
+  onRemind: (t: Todo, mins: number | null) => void;
   onDelete: (t: Todo) => void;
   onReorder: (id: string, dir: -1 | 1) => void;
   loading: boolean;
@@ -553,6 +662,7 @@ function TaskList({
                 onToggle={onToggle}
                 onEdit={onEdit}
                 onReschedule={onReschedule}
+                onRemind={onRemind}
                 onDelete={onDelete}
                 onReorder={onReorder}
               />
@@ -604,6 +714,7 @@ function TaskList({
                   onToggle={onToggle}
                   onEdit={onEdit}
                   onReschedule={onReschedule}
+                  onRemind={onRemind}
                   onDelete={onDelete}
                   onReorder={onReorder}
                 />
@@ -629,6 +740,7 @@ function TaskList({
                 onToggle={onToggle}
                 onEdit={onEdit}
                 onReschedule={onReschedule}
+                onRemind={onRemind}
                 onDelete={onDelete}
                 onReorder={onReorder}
               />
@@ -650,6 +762,7 @@ function TaskRow({
   onToggle,
   onEdit,
   onReschedule,
+  onRemind,
   onDelete,
   onReorder,
 }: {
@@ -661,6 +774,7 @@ function TaskRow({
   onToggle: (t: Todo) => void;
   onEdit: (t: Todo, content: string) => void;
   onReschedule: (t: Todo, iso: string | null) => void;
+  onRemind: (t: Todo, mins: number | null) => void;
   onDelete: (t: Todo) => void;
   onReorder: (id: string, dir: -1 | 1) => void;
 }) {
@@ -788,6 +902,27 @@ function TaskRow({
             )}
           </button>
         )}
+
+        {/* Per-task reminder-lead override — only meaningful once the task has a due time. */}
+        {todo.due_at && !picking && (
+          <label style={sx.remindPick}>
+            <span style={sx.remindPickLabel}>🔔 เตือนก่อน</span>
+            <select
+              style={sx.remindSelect}
+              value={todo.remind_before_minutes ?? ""}
+              onChange={(e) => {
+                const v = e.target.value;
+                onRemind(todo, v === "" ? null : Number(v));
+              }}
+            >
+              {TASK_LEAD_PRESETS.map((p) => (
+                <option key={p.label} value={p.value ?? ""}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
 
       <div style={sx.rowActions}>
@@ -902,6 +1037,7 @@ function GlobalStyle() {
         .plan-scope input[type="datetime-local"]{
           color-scheme:light dark;font-family:${FONT};
         }
+        .plan-scope select{color-scheme:light dark;}
         .plan-scope input::placeholder{color:${T.dim};}
         .plan-scope ::-webkit-scrollbar{width:9px;height:9px;}
         .plan-scope ::-webkit-scrollbar-thumb{background:${T.border2};border-radius:8px;}
@@ -1024,6 +1160,60 @@ const sx: Record<string, React.CSSProperties> = {
     border: "none",
     borderRadius: 10,
     padding: "9px 18px",
+    cursor: "pointer",
+  },
+
+  // reminder default panel
+  remindWrap: {
+    border: `1px solid ${T.border}`,
+    borderRadius: 16,
+    padding: "12px 14px",
+    background: T.panel,
+    display: "flex",
+    flexDirection: "column",
+    gap: 9,
+  },
+  remindHead: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" },
+  remindTitle: { fontSize: 13.5, fontWeight: 700, color: T.text },
+  remindSaved: {
+    fontFamily: MONO,
+    fontSize: 11,
+    color: T.green,
+    background: "rgba(55,226,176,.12)",
+    border: `1px solid rgba(55,226,176,.35)`,
+    borderRadius: 999,
+    padding: "1px 9px",
+  },
+  segRow: { display: "flex", gap: 6, flexWrap: "wrap" },
+  segBtn: {
+    fontFamily: FONT,
+    fontSize: 12.5,
+    color: T.muted,
+    background: T.panel2,
+    border: `1px solid ${T.border}`,
+    borderRadius: 999,
+    padding: "6px 13px",
+  },
+  segBtnOn: {
+    color: T.onAccent,
+    fontWeight: 700,
+    background: `linear-gradient(90deg, ${T.blue}, ${T.green})`,
+    borderColor: "transparent",
+  },
+  remindHelp: { margin: 0, color: T.dim, fontSize: 12, lineHeight: 1.55 },
+
+  // per-task reminder override (inside a task row)
+  remindPick: { display: "inline-flex", alignItems: "center", gap: 6, alignSelf: "flex-start" },
+  remindPickLabel: { fontSize: 12, color: T.dim },
+  remindSelect: {
+    fontFamily: FONT,
+    fontSize: 12.5,
+    color: T.text,
+    background: T.panel2,
+    border: `1px solid ${T.border}`,
+    borderRadius: 8,
+    padding: "4px 8px",
+    outline: "none",
     cursor: "pointer",
   },
 

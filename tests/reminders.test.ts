@@ -195,7 +195,7 @@ vi.mock("../lib/line/client", () => ({
 }));
 
 // Import AFTER mocks so lib/reminders binds to the mocked db / crypto / line client.
-import { scanTodoReminders } from "../lib/reminders";
+import { scanTodoReminders, reminderLead, isReminderDue, MAX_LEAD_MINUTES } from "../lib/reminders";
 import { formatThaiDueAt } from "../lib/modules/assistant/datetime";
 
 beforeEach(() => {
@@ -283,5 +283,52 @@ describe("scanTodoReminders — only due + not-done + not-yet-reminded todos fir
     expect(updatedIds).toEqual([DUE_A.id, DUE_B.id].sort());
     expect(updatedIds).not.toContain(NOT_YET_DUE.id);
     expect(updatedIds).not.toContain(ALREADY_REMINDED.id);
+  });
+});
+
+// ── configurable lead-time helpers (pure) ──────────────────────────────────────────────────
+describe("reminderLead — task override ?? target default ?? 0, clamped", () => {
+  it("task override wins over the target default", () => {
+    expect(reminderLead(5, 30)).toBe(5);
+    expect(reminderLead(0, 30)).toBe(0); // explicit 0 override (ตรงเวลา) beats the default
+  });
+
+  it("falls back to the target default when there is no override", () => {
+    expect(reminderLead(null, 30)).toBe(30);
+    expect(reminderLead(undefined, 15)).toBe(15);
+  });
+
+  it("falls back to 0 when neither is set", () => {
+    expect(reminderLead(null, null)).toBe(0);
+    expect(reminderLead(undefined, undefined)).toBe(0);
+  });
+
+  it("clamps negatives to 0 and caps at MAX_LEAD_MINUTES", () => {
+    expect(reminderLead(-10, 0)).toBe(0);
+    expect(reminderLead(99999, 0)).toBe(MAX_LEAD_MINUTES);
+    expect(reminderLead(null, 99999)).toBe(MAX_LEAD_MINUTES);
+  });
+
+  it("truncates fractional minutes", () => {
+    expect(reminderLead(15.9, 0)).toBe(15);
+  });
+});
+
+describe("isReminderDue — fire when now >= due_at - lead", () => {
+  const due = Date.UTC(2026, 6, 3, 7, 0, 0); // 14:00 Bangkok
+
+  it("lead 0: not due 1 min before, due exactly at due time", () => {
+    expect(isReminderDue(due, due - 60_000, 0)).toBe(false);
+    expect(isReminderDue(due, due, 0)).toBe(true);
+  });
+
+  it("lead 15: becomes due 15 minutes before due_at", () => {
+    expect(isReminderDue(due, due - 16 * 60_000, 15)).toBe(false); // 16 min before → not yet
+    expect(isReminderDue(due, due - 15 * 60_000, 15)).toBe(true); // exactly 15 min before → fire
+    expect(isReminderDue(due, due - 5 * 60_000, 15)).toBe(true); // 5 min before → still due
+  });
+
+  it("stays due after the due time has passed", () => {
+    expect(isReminderDue(due, due + 60_000, 10)).toBe(true);
   });
 });

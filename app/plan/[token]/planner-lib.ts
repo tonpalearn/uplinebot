@@ -38,8 +38,40 @@ export interface Todo {
   done: boolean;
   due_at: string | null;
   sort_order: number | null;
+  // Per-task reminder-lead OVERRIDE in minutes before due_at (null = use the target default).
+  remind_before_minutes: number | null;
   created_at: string;
 }
+
+// Server clamps lead to 24h (lib/reminders.MAX_LEAD_MINUTES). Kept here so the UI presets
+// never offer a value the API would silently trim.
+export const MAX_LEAD_MINUTES = 1440;
+
+/** Preset lead options for the TARGET default control (minutes before due; 0 = at due time). */
+export const LEAD_PRESETS: ReadonlyArray<{ label: string; value: number }> = [
+  { label: "ไม่เตือนล่วงหน้า", value: 0 },
+  { label: "5 นาที", value: 5 },
+  { label: "10", value: 10 },
+  { label: "15", value: 15 },
+  { label: "30", value: 30 },
+  { label: "1 ชม.", value: 60 },
+  { label: "1 วัน", value: 1440 },
+];
+
+/**
+ * Preset lead options for a PER-TASK override. `value === null` means "clear the override
+ * → fall back to the target default"; a number is the explicit per-task lead in minutes.
+ */
+export const TASK_LEAD_PRESETS: ReadonlyArray<{ label: string; value: number | null }> = [
+  { label: "ตามค่าเริ่มต้น", value: null },
+  { label: "ตรงเวลา", value: 0 },
+  { label: "5", value: 5 },
+  { label: "10", value: 10 },
+  { label: "15", value: 15 },
+  { label: "30", value: 30 },
+  { label: "1 ชม.", value: 60 },
+  { label: "1 วัน", value: 1440 },
+];
 
 export interface BkkYmd {
   y: number;

@@ -15,9 +15,10 @@ export const dynamic = "force-dynamic";
  * to the resolved targetId — a targetId is never trusted from the request body, so one
  * token can only ever see/mutate its own chat's tasks (per-group isolation preserved).
  *
- *   GET    → { ok, todos:[{id,content,done,due_at,sort_order,created_at}] } (chat-list order).
- *   POST   { content, due_at? }                       → insert (400 if content empty).
- *   PATCH  { id, content?, due_at?, done?, sort_order? } → update IF row belongs to target, else 404.
+ *   GET    → { ok, todos:[{…,remind_before_minutes}], reminder_lead_minutes } (target default).
+ *   POST   { content, due_at?, remind_before_minutes? } → insert (400 if content empty).
+ *   PATCH  { id, content?, due_at?, done?, sort_order?, remind_before_minutes? } → update the todo;
+ *          OR { reminder_lead_minutes } (no id) → set the TARGET's default lead. 404 if not found.
  *   DELETE { id }                                     → delete IF row belongs to target, else 404.
  */
 
@@ -31,10 +32,21 @@ interface TodoRow {
   done: boolean;
   due_at: string | null;
   sort_order: number | null;
+  remind_before_minutes: number | null;
   created_at: string;
 }
 
-const TODO_COLUMNS = "id, content, done, due_at, sort_order, created_at";
+const TODO_COLUMNS = "id, content, done, due_at, sort_order, remind_before_minutes, created_at";
+
+// Clamp a client-supplied "remind before" minutes value. Matches lib/reminders.MAX_LEAD_MINUTES.
+const MAX_LEAD_MINUTES = 1440;
+function normalizeLead(raw: unknown): number | null | undefined {
+  if (raw === undefined) return undefined; // not provided → leave unchanged
+  if (raw === null || raw === "") return null; // explicit clear → use target default
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(Math.trunc(n), MAX_LEAD_MINUTES);
+}
 
 function unauthorized(): NextResponse {
   return NextResponse.json({ ok: false, reason: "invalid_token" }, { status: 401 });
@@ -77,18 +89,23 @@ export async function GET(_req: NextRequest, ctx: RouteCtx): Promise<NextRespons
   if (!auth) return unauthorized();
 
   const supabase = getServiceClient();
-  const { data, error } = await supabase
-    .from("upl_todos")
-    .select(TODO_COLUMNS)
-    .eq("target_id", auth.targetId)
-    .order("created_at", { ascending: true });
+  const [todosRes, targetRes] = await Promise.all([
+    supabase
+      .from("upl_todos")
+      .select(TODO_COLUMNS)
+      .eq("target_id", auth.targetId)
+      .order("created_at", { ascending: true }),
+    supabase.from("upl_targets").select("reminder_lead_minutes").eq("id", auth.targetId).maybeSingle(),
+  ]);
 
-  if (error) {
-    return NextResponse.json({ ok: false, reason: error.message }, { status: 500 });
+  if (todosRes.error) {
+    return NextResponse.json({ ok: false, reason: todosRes.error.message }, { status: 500 });
   }
 
-  const todos = sortTodos((data ?? []) as TodoRow[]);
-  return NextResponse.json({ ok: true, todos });
+  const todos = sortTodos((todosRes.data ?? []) as TodoRow[]);
+  const reminder_lead_minutes =
+    ((targetRes.data as { reminder_lead_minutes?: number | null } | null)?.reminder_lead_minutes) ?? 0;
+  return NextResponse.json({ ok: true, todos, reminder_lead_minutes });
 }
 
 // ── POST: add a todo to this target ──────────────────────────────────────────────────────
@@ -96,7 +113,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx): Promise<NextRespons
   const auth = await validatePlanToken(ctx.params.token);
   if (!auth) return unauthorized();
 
-  let body: { content?: unknown; due_at?: unknown };
+  let body: { content?: unknown; due_at?: unknown; remind_before_minutes?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -109,12 +126,18 @@ export async function POST(req: NextRequest, ctx: RouteCtx): Promise<NextRespons
   }
 
   const dueAt = normalizeDueAt(body.due_at);
+  const lead = normalizeLead(body.remind_before_minutes);
 
   const supabase = getServiceClient();
   const { data, error } = await supabase
     .from("upl_todos")
     // target_id ALWAYS comes from the validated token, never from the body.
-    .insert({ target_id: auth.targetId, content, due_at: dueAt ?? null })
+    .insert({
+      target_id: auth.targetId,
+      content,
+      due_at: dueAt ?? null,
+      remind_before_minutes: lead ?? null,
+    })
     .select(TODO_COLUMNS)
     .single();
 
@@ -136,6 +159,8 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx): Promise<NextRespon
     due_at?: unknown;
     done?: unknown;
     sort_order?: unknown;
+    remind_before_minutes?: unknown;
+    reminder_lead_minutes?: unknown;
   };
   try {
     body = await req.json();
@@ -144,6 +169,21 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx): Promise<NextRespon
   }
 
   const id = typeof body.id === "string" ? body.id : "";
+
+  // No id + reminder_lead_minutes → set the TARGET's default lead (not a per-todo update).
+  if (!id && body.reminder_lead_minutes !== undefined) {
+    const lead = normalizeLead(body.reminder_lead_minutes) ?? 0; // target default is non-null
+    const supabase = getServiceClient();
+    const { error } = await supabase
+      .from("upl_targets")
+      .update({ reminder_lead_minutes: lead })
+      .eq("id", auth.targetId);
+    if (error) {
+      return NextResponse.json({ ok: false, reason: error.message }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true, reminder_lead_minutes: lead });
+  }
+
   if (!id) {
     return NextResponse.json({ ok: false, reason: "id is required" }, { status: 400 });
   }
@@ -162,6 +202,12 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx): Promise<NextRespon
     const dueAt = normalizeDueAt(body.due_at);
     patch.due_at = dueAt ?? null;
     // Changing the due time re-arms the reminder (mirror rescheduleTodo in todo.ts).
+    patch.reminded_at = null;
+  }
+
+  if (body.remind_before_minutes !== undefined) {
+    patch.remind_before_minutes = normalizeLead(body.remind_before_minutes) ?? null;
+    // Changing the lead re-arms the reminder so the new offset takes effect.
     patch.reminded_at = null;
   }
 
