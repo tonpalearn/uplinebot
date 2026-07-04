@@ -2,45 +2,36 @@ import type { OutboundMessage, QuickReplyItem } from "../types";
 import { categoryEmoji } from "./categories";
 import type { LedgerSummary } from "./summary";
 import type { LedgerRow } from "./ledger";
+import {
+  FS,
+  NEUTRAL,
+  MONEY,
+  MONEY_ACCENT,
+  BAR_COLORS,
+  gradientHeader,
+  headerStyle,
+  footerStyle,
+  numberChip,
+  softSep,
+  primaryButton,
+} from "../flex-ui";
 
 /**
  * Flex + plain-text builders for the expense-tracker (สมุดรายรับ-รายจ่าย).
  *
- * Flex is NOT themeable (LINE renders it server-side), so every color here is a FIXED hex —
- * same convention as lib/modules/assistant/flex.ts. The web report (/ledger/<token>) is the
- * theme-aware surface; this is the in-chat card.
+ * The cards wear the shared design system (lib/modules/flex-ui.ts) in the MONEY accent —
+ * a GREEN gradient header + emerald number chips — the counterpart to the RED todo card.
+ * Money DIRECTION stays semantic regardless of the green header: รายรับ green (+), รายจ่าย
+ * red (−). Flex colors are FIXED hex (LINE renders server-side); the theme-aware surface is
+ * the web report (/ledger/<token>).
  *
  * buildRecordConfirm  → concise "✅ บันทึก N รายการ: …" text + Quick Reply.
- * buildSummaryFlex    → the polished "graph card": net balance header, income/expense/net
- *                       rows, then per-category HORIZONTAL BARS (the graph) + a web-report
- *                       button. Quick Reply (วันนี้/สัปดาห์/เดือน) attached.
- * buildEntryListFlex  → a clean NUMBERED list card (item+emoji, category, signed amount) —
+ * buildSummaryFlex    → the polished "graph card": green header with the net balance, then
+ *                       income/expense/net rows + per-category HORIZONTAL BARS + web button.
+ * buildEntryListFlex  → a clean NUMBERED list card (chip + item + category + signed amount) —
  *                       the simple "รายการ" view (no graph). Empty → friendly hint text.
  * buildSummaryText    → plain-text fallback (totals + category lines).
  */
-
-// ── palette (fixed hex; Flex can't read CSS vars) ──────────────────────────────
-const COLOR_TEXT = "#1F2933";
-const COLOR_MUTED = "#7B8794";
-const COLOR_GREEN = "#0E7C66"; // รายรับ / net ≥ 0
-const COLOR_RED = "#C0341D"; // รายจ่าย / net < 0
-const COLOR_SEP = "#E4E7EB";
-const COLOR_TRACK = "#EEF1F4"; // พื้นหลังแท่งกราฟ (ราง)
-const COLOR_HEADER_BG = "#FFFFFF";
-const COLOR_FOOTER_BG = "#FAFBFC";
-const COLOR_BTN = "#0E7C66"; // ปุ่มดูรายงานเว็บ
-
-/** จานสีคงที่สำหรับแท่งกราฟแต่ละหมวด (วนซ้ำถ้าหมวดเกินจำนวนสี) */
-const BAR_COLORS = [
-  "#0E7C66", // teal-green
-  "#2563EB", // blue
-  "#B45309", // amber
-  "#7C3AED", // purple
-  "#C0341D", // red
-  "#0891B2", // cyan
-  "#B7791F", // gold
-  "#65A30D", // lime
-];
 
 /** จำนวนหมวดสูงสุดที่โชว์เป็นแท่งกราฟในการ์ด */
 const MAX_BARS = 6;
@@ -52,7 +43,7 @@ export interface SummaryFlexOpts {
   quick?: boolean;
 }
 
-// ── money formatting ───────────────────────────────────────────────────────────
+// ── money formatting ─────────────────────────────────────────────────────────────────
 /** จัดรูปแบบเงินบาท เช่น 1234.5 → "1,234.50" (ตัด .00 ออกถ้าเป็นจำนวนเต็ม) — ใช้ th-TH */
 function formatTHB(n: number): string {
   const abs = Math.abs(n);
@@ -73,7 +64,7 @@ function signedNet(net: number): string {
   return (net >= 0 ? "+" : "−") + formatTHB(net);
 }
 
-// ── Quick Reply ────────────────────────────────────────────────────────────────
+// ── Quick Reply ──────────────────────────────────────────────────────────────────────
 /** ปุ่มลัดหลังการ์ด/คอนเฟิร์ม: สรุปวันนี้ / สัปดาห์ / เดือน / รายการ / รายงาน */
 export function ledgerQuickReply(): { items: QuickReplyItem[] } {
   return {
@@ -87,7 +78,7 @@ export function ledgerQuickReply(): { items: QuickReplyItem[] } {
   };
 }
 
-// ── record confirmation ────────────────────────────────────────────────────────
+// ── record confirmation ────────────────────────────────────────────────────────────────
 /**
  * คอนเฟิร์มการบันทึกแบบกระชับ เช่น
  *   "✅ บันทึก 2 รายการ: กาแฟ −50 (กิน), เงินเดือน +30,000 (เงินเดือน)"
@@ -104,51 +95,47 @@ export function buildRecordConfirm(
   return { type: "text", text, quickReply: ledgerQuickReply() };
 }
 
-// ── entry list flex (the simple list card) ──────────────────────────────────────
+// ── entry list flex (the simple list card) ──────────────────────────────────────────────
 export interface EntryListFlexOpts {
   periodLabel: string;
 }
 
-/** หนึ่งแถวรายการในลิสต์: เลขลำดับ + อีโมจิ/ชื่อรายการ + หมวด (ซ้าย) แล้วจำนวนมีสี (ขวา) */
+/** หนึ่งแถวรายการในลิสต์: เลขในชิป + อีโมจิ/ชื่อรายการ + หมวด (ซ้าย) แล้วจำนวนมีสี (ขวา) */
 function entryRow(index: number, row: LedgerRow): Record<string, unknown> {
-  const amtColor = row.kind === "income" ? COLOR_GREEN : COLOR_RED;
+  const amtColor = row.kind === "income" ? MONEY.income : MONEY.expense;
   return {
     type: "box",
     layout: "horizontal",
     margin: "md",
-    spacing: "sm",
+    spacing: "md",
     contents: [
-      {
-        type: "text",
-        text: `${index}.`,
-        size: "sm",
-        color: COLOR_MUTED,
-        flex: 0,
-        align: "start",
-      },
+      numberChip(index, MONEY_ACCENT),
       {
         type: "box",
         layout: "vertical",
         flex: 1,
+        justifyContent: "center",
         spacing: "none",
         contents: [
           {
             type: "text",
             text: `${categoryEmoji(row.category)} ${row.raw_text ?? "(ไม่ระบุ)"}`,
-            size: "sm",
-            color: COLOR_TEXT,
+            size: FS.body,
+            color: NEUTRAL.text,
+            weight: "bold",
             wrap: true,
           },
-          { type: "text", text: row.category, size: "xxs", color: COLOR_MUTED, margin: "xs" },
+          { type: "text", text: row.category, size: FS.meta, color: NEUTRAL.muted, margin: "xs" },
         ],
       },
       {
         type: "text",
         text: signed(row.kind, row.amount),
-        size: "sm",
+        size: FS.body,
         color: amtColor,
         weight: "bold",
         align: "end",
+        gravity: "center",
         flex: 0,
       },
     ],
@@ -157,11 +144,10 @@ function entryRow(index: number, row: LedgerRow): Record<string, unknown> {
 
 /**
  * การ์ดลิสต์รายการแบบเรียบง่าย (ไม่มีกราฟ) — ใช้กับคำสั่ง "รายการ"/"ลิสต์".
- * header ป้ายช่วง + จำนวนรายการ, body รายการมีเลขลำดับ (อีโมจิ+ชื่อ, หมวด, จำนวนมีสี),
- * footer ปุ่มดูรายงานเว็บได้ต่อจากภายนอกผ่าน Quick Reply. ว่าง → คืนข้อความชวนบันทึกแทน.
+ * header เขียว (ป้ายช่วง + จำนวนรายการ), body รายการมีชิปเลข (อีโมจิ+ชื่อ, หมวด, จำนวนมีสี).
+ * ว่าง → คืนข้อความชวนบันทึกแทน (ไม่ขึ้นการ์ดเปล่า).
  */
 export function buildEntryListFlex(entries: LedgerRow[], opts: EntryListFlexOpts): OutboundMessage {
-  // ว่าง → ข้อความเป็นมิตร (ไม่ต้องขึ้นการ์ดเปล่า)
   if (entries.length === 0) {
     return {
       type: "text",
@@ -174,26 +160,21 @@ export function buildEntryListFlex(entries: LedgerRow[], opts: EntryListFlexOpts
 
   const bubble: Record<string, unknown> = {
     type: "bubble",
-    header: {
-      type: "box",
-      layout: "vertical",
-      paddingAll: "16px",
-      paddingBottom: "12px",
-      contents: [
-        { type: "text", text: `📋 รายการ ${opts.periodLabel}`, size: "md", weight: "bold", color: COLOR_TEXT },
-        { type: "text", text: `${entries.length} รายการ`, size: "xxs", color: COLOR_MUTED, margin: "sm" },
-      ],
-    },
+    header: gradientHeader({
+      accent: MONEY_ACCENT,
+      title: `📋 รายการ ${opts.periodLabel}`,
+      subtitle: `${entries.length} รายการ`,
+    }),
     body: {
       type: "box",
       layout: "vertical",
-      paddingAll: "16px",
-      paddingTop: "8px",
+      paddingAll: "20px",
+      paddingTop: "12px",
       spacing: "none",
       contents: bodyContents,
     },
     styles: {
-      header: { backgroundColor: COLOR_HEADER_BG },
+      header: headerStyle(MONEY_ACCENT),
     },
   };
 
@@ -201,16 +182,16 @@ export function buildEntryListFlex(entries: LedgerRow[], opts: EntryListFlexOpts
   return { type: "flex", altText, contents: bubble, quickReply: ledgerQuickReply() };
 }
 
-// ── summary flex (the graph card) ──────────────────────────────────────────────
+// ── summary flex (the graph card) ────────────────────────────────────────────────────────
 /** หนึ่งแถวยอด: ป้าย (💵 รายรับ) ซ้าย + จำนวนขวา (สี) */
 function totalRow(icon: string, label: string, value: string, color: string): Record<string, unknown> {
   return {
     type: "box",
     layout: "horizontal",
-    margin: "sm",
+    margin: "md",
     contents: [
-      { type: "text", text: `${icon} ${label}`, size: "sm", color: COLOR_TEXT, flex: 0 },
-      { type: "text", text: value, size: "sm", color, weight: "bold", align: "end", flex: 1 },
+      { type: "text", text: `${icon} ${label}`, size: FS.label, color: NEUTRAL.text, flex: 0 },
+      { type: "text", text: value, size: FS.label, color, weight: "bold", align: "end", flex: 1 },
     ],
   };
 }
@@ -236,16 +217,16 @@ function categoryBar(
           {
             type: "text",
             text: `${categoryEmoji(category)} ${category}`,
-            size: "xs",
-            color: COLOR_TEXT,
+            size: FS.meta,
+            color: NEUTRAL.text,
             flex: 1,
             wrap: false,
           },
           {
             type: "text",
             text: `${formatTHB(amount)} (${Math.round(pct)}%)`,
-            size: "xs",
-            color: COLOR_MUTED,
+            size: FS.caption,
+            color: NEUTRAL.muted,
             align: "end",
             flex: 0,
           },
@@ -255,17 +236,17 @@ function categoryBar(
       {
         type: "box",
         layout: "vertical",
-        height: "10px",
-        backgroundColor: COLOR_TRACK,
-        cornerRadius: "5px",
+        height: "12px",
+        backgroundColor: NEUTRAL.track,
+        cornerRadius: "6px",
         contents: [
           {
             type: "box",
             layout: "vertical",
             width,
-            height: "10px",
+            height: "12px",
             backgroundColor: color,
-            cornerRadius: "5px",
+            cornerRadius: "6px",
             contents: [{ type: "filler" }],
           },
         ],
@@ -275,40 +256,40 @@ function categoryBar(
 }
 
 /**
- * การ์ดสรุปแบบ Flex ("กราฟ"): header ป้ายช่วง + คงเหลือตัวใหญ่ (เขียว≥0 / แดง<0),
- * body รายรับ/รายจ่าย/คงเหลือ, เส้นคั่น, "รายจ่ายแยกหมวด" + แท่งกราฟ Top ~6 หมวด,
- * footer ปุ่มลิงก์ดูรายงานเว็บ + Quick Reply.
+ * การ์ดสรุปแบบ Flex ("กราฟ"): header เขียว (ป้ายช่วง + คงเหลือตัวใหญ่สีขาว, เซ็นต์ +/−),
+ * body รายรับ/รายจ่าย/คงเหลือ (คงเหลือมีสีตามเครื่องหมาย), เส้นคั่น, "รายจ่ายแยกหมวด" +
+ * แท่งกราฟ Top ~6 หมวด, footer ปุ่มลิงก์ดูรายงานเว็บ + Quick Reply.
  */
 export function buildSummaryFlex(summary: LedgerSummary, opts: SummaryFlexOpts): OutboundMessage {
-  const netColor = summary.net >= 0 ? COLOR_GREEN : COLOR_RED;
+  const netColor = summary.net >= 0 ? MONEY.income : MONEY.expense;
 
   const bodyContents: Record<string, unknown>[] = [
-    totalRow("💵", "รายรับ", signed("income", summary.income), COLOR_GREEN),
-    totalRow("💸", "รายจ่าย", signed("expense", summary.expense), COLOR_RED),
+    totalRow("💵", "รายรับ", signed("income", summary.income), MONEY.income),
+    totalRow("💸", "รายจ่าย", signed("expense", summary.expense), MONEY.expense),
     totalRow("✅", "คงเหลือ", signedNet(summary.net), netColor),
   ];
 
   const topCats = summary.byCat.slice(0, MAX_BARS);
   if (topCats.length > 0) {
-    bodyContents.push({ type: "separator", margin: "lg", color: COLOR_SEP });
+    bodyContents.push(softSep("lg"));
     bodyContents.push({
       type: "text",
       text: "รายจ่ายแยกหมวด",
-      size: "sm",
+      size: FS.section,
       weight: "bold",
-      color: COLOR_TEXT,
+      color: NEUTRAL.text,
       margin: "lg",
     });
     topCats.forEach((c, i) => {
       bodyContents.push(categoryBar(c.category, c.amount, c.pct, BAR_COLORS[i % BAR_COLORS.length]));
     });
   } else {
-    bodyContents.push({ type: "separator", margin: "lg", color: COLOR_SEP });
+    bodyContents.push(softSep("lg"));
     bodyContents.push({
       type: "text",
       text: "ยังไม่มีรายจ่ายในช่วงนี้",
-      size: "xs",
-      color: COLOR_MUTED,
+      size: FS.meta,
+      color: NEUTRAL.muted,
       margin: "lg",
       align: "center",
     });
@@ -316,50 +297,31 @@ export function buildSummaryFlex(summary: LedgerSummary, opts: SummaryFlexOpts):
 
   const bubble: Record<string, unknown> = {
     type: "bubble",
-    header: {
-      type: "box",
-      layout: "vertical",
-      paddingAll: "16px",
-      paddingBottom: "12px",
-      contents: [
-        { type: "text", text: `📊 ${opts.periodLabel}`, size: "sm", color: COLOR_MUTED },
-        { type: "text", text: "คงเหลือ", size: "xs", color: COLOR_MUTED, margin: "md" },
-        { type: "text", text: `${signedNet(summary.net)} ฿`, size: "xxl", weight: "bold", color: netColor },
-        {
-          type: "text",
-          text: `${summary.count} รายการ`,
-          size: "xxs",
-          color: COLOR_MUTED,
-          margin: "sm",
-        },
-      ],
-    },
+    header: gradientHeader({
+      accent: MONEY_ACCENT,
+      eyebrow: `📊 ${opts.periodLabel}`,
+      heroLabel: "คงเหลือ",
+      hero: `${signedNet(summary.net)} ฿`,
+      subtitle: `${summary.count} รายการ`,
+    }),
     body: {
       type: "box",
       layout: "vertical",
-      paddingAll: "16px",
-      paddingTop: "8px",
+      paddingAll: "20px",
+      paddingTop: "12px",
       spacing: "none",
       contents: bodyContents,
     },
     footer: {
       type: "box",
       layout: "vertical",
-      paddingAll: "12px",
+      paddingAll: "16px",
       spacing: "sm",
-      contents: [
-        {
-          type: "button",
-          style: "primary",
-          color: COLOR_BTN,
-          height: "sm",
-          action: { type: "uri", label: "📊 ดูรายงานเว็บ", uri: opts.reportUrl },
-        },
-      ],
+      contents: [primaryButton("📊 ดูรายงานเว็บ", opts.reportUrl, MONEY_ACCENT.solid)],
     },
     styles: {
-      header: { backgroundColor: COLOR_HEADER_BG },
-      footer: { backgroundColor: COLOR_FOOTER_BG },
+      header: headerStyle(MONEY_ACCENT),
+      footer: footerStyle(),
     },
   };
 
@@ -371,7 +333,7 @@ export function buildSummaryFlex(summary: LedgerSummary, opts: SummaryFlexOpts):
   return { type: "flex", altText, contents: bubble, quickReply: ledgerQuickReply() };
 }
 
-// ── plain-text fallback ────────────────────────────────────────────────────────
+// ── plain-text fallback ──────────────────────────────────────────────────────────────────
 /** สรุปแบบข้อความล้วน: ยอดรวม + บรรทัดหมวด (ใช้เมื่อไม่ต้องการ Flex) */
 export function buildSummaryText(summary: LedgerSummary, periodLabel: string): string {
   const lines: string[] = [

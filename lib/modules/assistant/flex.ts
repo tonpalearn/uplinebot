@@ -1,16 +1,29 @@
 import type { OutboundMessage, QuickReplyItem } from "../types";
 import { formatThaiDueAt } from "./datetime";
+import {
+  FS,
+  NEUTRAL,
+  TODO_ACCENT,
+  gradientHeader,
+  headerStyle,
+  footerStyle,
+  numberChip,
+  softSep,
+} from "../flex-ui";
 
 /**
  * Flex + plain-text builders for the Todo Manager list.
  *
- * buildTodoListFlex(todos, opts) → a polished numbered Flex bubble (LINE Flex spec:
- * bubble → box(vertical) → text/box/separator), plus a Quick Reply attached to the
- * returned message. `todos` are ALREADY numbered/ordered by the caller (todo.ts) — the
- * `n` field is the visible 1..N number that done/delete/reschedule commands reference.
+ * The card wears the shared design system (lib/modules/flex-ui.ts) in the TODO accent —
+ * a RED gradient header + rose number chips — so a task list is instantly distinguishable
+ * from the GREEN money card. Typography comes from the shared FS scale (bigger, readable).
  *
- * buildTodoListText(todos, opts) → the plain-text fallback used for confirmations / any
- * surface where Flex is not desired.
+ * buildTodoListFlex(todos, opts) → a polished numbered Flex bubble (bubble → header(gradient)
+ * → body(rows) → footer(hint)), plus a Quick Reply. `todos` are ALREADY numbered/ordered by
+ * the caller (todo.ts); the `n` field is the visible 1..N number that done/delete/reschedule
+ * commands reference.
+ *
+ * buildTodoListText(todos, opts) → plain-text fallback for confirmations / non-Flex surfaces.
  */
 
 export interface TodoListItem {
@@ -27,14 +40,8 @@ export interface BuildListOpts {
   title?: string;
 }
 
-// TONPALEARN-ish palette: charcoal text, muted secondary, green accent for done, amber for due.
-const COLOR_TEXT = "#1F2933";
-const COLOR_MUTED = "#7B8794";
-const COLOR_DONE = "#9AA5B1";
-const COLOR_ACCENT = "#0E7C66"; // green — header + done check
-const COLOR_DUE = "#B45309"; // amber — due date/time
-const COLOR_NUM_BG = "#E6F4F1"; // pale green chip behind the number
-const COLOR_SEP = "#E4E7EB";
+const COLOR_DONE = "#9AA5B1"; // muted grey for completed rows
+const COLOR_DUE = "#B45309"; // amber for the due date/time line
 
 const DEFAULT_TITLE = "📋 รายการงาน";
 
@@ -49,7 +56,7 @@ export function todoQuickReply(): { items: QuickReplyItem[] } {
   };
 }
 
-/** One task row: number chip + task text (+ due line when present). */
+/** One task row: rose number chip + task text (+ due line when present). */
 function todoRow(item: TodoListItem, now: Date): Record<string, unknown> {
   const isDone = item.done;
 
@@ -57,11 +64,11 @@ function todoRow(item: TodoListItem, now: Date): Record<string, unknown> {
     {
       type: "text",
       text: isDone ? `✅ ${item.content}` : item.content,
-      size: "sm",
-      color: isDone ? COLOR_DONE : COLOR_TEXT,
+      size: FS.body,
+      color: isDone ? COLOR_DONE : NEUTRAL.text,
       weight: isDone ? "regular" : "bold",
       wrap: true,
-      // strike-through styling isn't a Flex text property; the ✅ + muted grey conveys "done".
+      // Flex has no strike-through text property; the ✅ + muted grey + line-through convey "done".
       decoration: isDone ? "line-through" : "none",
     },
   ];
@@ -70,7 +77,7 @@ function todoRow(item: TodoListItem, now: Date): Record<string, unknown> {
     textContents.push({
       type: "text",
       text: `🗓️ ${formatThaiDueAt(item.dueAt, now)}`,
-      size: "xs",
+      size: FS.meta,
       color: COLOR_DUE,
       wrap: true,
       margin: "xs",
@@ -83,31 +90,12 @@ function todoRow(item: TodoListItem, now: Date): Record<string, unknown> {
     spacing: "md",
     margin: "md",
     contents: [
-      // Number chip
-      {
-        type: "box",
-        layout: "vertical",
-        width: "28px",
-        height: "28px",
-        cornerRadius: "14px",
-        backgroundColor: isDone ? COLOR_SEP : COLOR_NUM_BG,
-        justifyContent: "center",
-        contents: [
-          {
-            type: "text",
-            text: String(item.n),
-            size: "sm",
-            weight: "bold",
-            align: "center",
-            color: isDone ? COLOR_MUTED : COLOR_ACCENT,
-          },
-        ],
-      },
-      // Task text block (grows to fill)
+      numberChip(item.n, TODO_ACCENT, isDone),
       {
         type: "box",
         layout: "vertical",
         flex: 1,
+        justifyContent: "center",
         contents: textContents,
       },
     ],
@@ -126,62 +114,43 @@ export function buildTodoListFlex(todos: TodoListItem[], opts: BuildListOpts): O
 
   const bodyContents: Record<string, unknown>[] = [];
   todos.forEach((item, i) => {
-    if (i > 0) {
-      bodyContents.push({ type: "separator", margin: "md", color: COLOR_SEP });
-    }
+    if (i > 0) bodyContents.push(softSep("md"));
     bodyContents.push(todoRow(item, now));
   });
 
   const bubble: Record<string, unknown> = {
     type: "bubble",
-    header: {
-      type: "box",
-      layout: "vertical",
-      paddingAll: "16px",
-      paddingBottom: "12px",
-      contents: [
-        {
-          type: "text",
-          text: title,
-          weight: "bold",
-          size: "lg",
-          color: COLOR_ACCENT,
-        },
-        {
-          type: "text",
-          text: `ค้าง ${openCount}/ทั้งหมด ${total}`,
-          size: "xs",
-          color: COLOR_MUTED,
-          margin: "sm",
-        },
-      ],
-    },
+    header: gradientHeader({
+      accent: TODO_ACCENT,
+      title,
+      subtitle: `ค้าง ${openCount}/ทั้งหมด ${total}`,
+    }),
     body: {
       type: "box",
       layout: "vertical",
-      paddingAll: "16px",
-      paddingTop: "8px",
+      paddingAll: "20px",
+      paddingTop: "12px",
       spacing: "none",
       contents: bodyContents,
     },
     footer: {
       type: "box",
       layout: "vertical",
-      paddingAll: "12px",
+      paddingAll: "16px",
       contents: [
         {
           type: "text",
-          text: 'เสร็จ [เลข] · ลบ [เลข] · เลื่อน [เลข] [เวลา]',
-          size: "xxs",
-          color: COLOR_MUTED,
+          text: "เสร็จ [เลข] · ลบ [เลข] · เลื่อน [เลข] [เวลา]",
+          size: FS.caption,
+          color: NEUTRAL.muted,
           wrap: true,
           align: "center",
         },
       ],
     },
     styles: {
-      header: { backgroundColor: "#FFFFFF" },
-      footer: { backgroundColor: "#FAFBFC" },
+      header: headerStyle(TODO_ACCENT),
+      footer: footerStyle(),
     },
   };
 
