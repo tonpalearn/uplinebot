@@ -249,7 +249,7 @@ export default function PlanPage({ params }: { params: { token: string } }) {
                 disabled={status === "loading"}
               />
 
-              <div style={sx.grid2}>
+              <div className="plan-grid2" style={sx.grid2}>
                 <Calendar
                   cursor={cursor}
                   setCursor={setCursor}
@@ -298,7 +298,7 @@ function Header({
   onRefresh: () => void;
 }) {
   return (
-    <div style={sx.hero}>
+    <div className="plan-hero" style={sx.hero}>
       <div style={{ position: "relative", zIndex: 1 }}>
         <div style={sx.eyebrow}>ปฏิทินงาน · My Planner</div>
         <h1 style={sx.h1}>
@@ -507,7 +507,7 @@ function Calendar({
         </button>
       </div>
 
-      <div style={sx.dow}>
+      <div className="plan-dow" style={sx.dow}>
         {THAI_WEEKDAYS_SHORT.map((w, i) => (
           <div
             key={w}
@@ -521,7 +521,7 @@ function Calendar({
         ))}
       </div>
 
-      <div style={sx.calGrid}>
+      <div className="plan-cal-grid" style={sx.calGrid}>
         {cells.map((d, i) => {
           if (d === null) return <div key={`b${i}`} style={sx.emptyCell} />;
           const key = ymdKey({ y, m, d });
@@ -1043,6 +1043,17 @@ function GlobalStyle() {
         .plan-scope ::-webkit-scrollbar-thumb{background:${T.border2};border-radius:8px;}
         .plan-scope ::-webkit-scrollbar-track{background:transparent;}
         .plan-day-cell:hover{filter:brightness(1.25);}
+        /* ── responsive: collapse the 2-col planner → 1-col; tighten calendar on phones (LINE webview) ── */
+        @media (max-width:820px){
+          .plan-grid2{grid-template-columns:1fr !important;}
+        }
+        @media (max-width:560px){
+          .plan-scope{padding:16px 12px 48px !important;}
+          .plan-hero{padding:20px 18px !important;border-radius:18px !important;}
+          .plan-hero h1{font-size:24px !important;}
+          .plan-dow,.plan-cal-grid{gap:3px !important;}
+          .plan-day-cell{min-height:46px !important;padding:5px !important;}
+        }
       `,
       }}
     />
@@ -1072,6 +1083,8 @@ const sx: Record<string, React.CSSProperties> = {
     borderRadius: 22,
     padding: "26px 26px",
     background: "linear-gradient(135deg, rgba(77,163,255,.12), rgba(192,132,252,.06))",
+    backdropFilter: "blur(14px)", // frost the translucent hero over the radial backdrop
+    WebkitBackdropFilter: "blur(14px)",
     display: "flex",
     alignItems: "flex-start",
     justifyContent: "space-between",

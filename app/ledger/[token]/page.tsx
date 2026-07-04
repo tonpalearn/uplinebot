@@ -261,7 +261,7 @@ export default function LedgerPage({ params }: { params: { token: string } }) {
 // ── header ──────────────────────────────────────────────────────────────────────
 function Header({ label, loading, onRefresh }: { label: string; loading: boolean; onRefresh: () => void }) {
   return (
-    <div style={sx.hero}>
+    <div className="ledger-hero" style={sx.hero}>
       <div style={{ position: "relative", zIndex: 1 }}>
         <div style={sx.eyebrow}>สมุดรายรับ-รายจ่าย · Ledger</div>
         <h1 style={sx.h1}>
@@ -361,7 +361,7 @@ function PeriodToggle({
 function SummaryCards({ summary }: { summary: Summary }) {
   const netColor = summary.net >= 0 ? T.success : T.danger;
   return (
-    <div style={sx.cards}>
+    <div className="ledger-cards" style={sx.cards}>
       <div style={{ ...sx.card, borderColor: T.border }}>
         <div style={sx.cardLabel}>💵 รายรับ</div>
         <div style={{ ...sx.cardValue, color: T.success }}>{signed("income", summary.income)}</div>
@@ -858,6 +858,15 @@ function GlobalStyle() {
         .ledger-scope ::-webkit-scrollbar{width:9px;height:9px;}
         .ledger-scope ::-webkit-scrollbar-thumb{background:${T.borderStrong};border-radius:8px;}
         .ledger-scope ::-webkit-scrollbar-track{background:transparent;}
+        /* ── mobile (LINE in-app browser ~375–430px): tighten, shrink hero, keep 3 stat cards ── */
+        @media (max-width:560px){
+          .ledger-scope{padding:16px 12px 48px !important;}
+          .ledger-hero{padding:20px 18px !important;border-radius:18px !important;}
+          .ledger-hero h1{font-size:23px !important;}
+          .ledger-cards{gap:8px !important;}
+          .ledger-cards > div{padding:12px 11px !important;}
+          .ledger-cards > div > div:nth-child(2){font-size:16px !important;}
+        }
       `,
       }}
     />
@@ -873,7 +882,7 @@ const sx: Record<string, React.CSSProperties> = {
     minHeight: "100vh",
     fontFamily: FONT,
     color: T.fg,
-    background: T.bg,
+    background: "transparent", // let the global --bg-tint radial backdrop show → glass depth
     padding: "24px 18px 64px",
   },
   shell: { maxWidth: 820, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 },
@@ -885,7 +894,9 @@ const sx: Record<string, React.CSSProperties> = {
     border: `1px solid ${T.border}`,
     borderRadius: 22,
     padding: "26px 26px",
-    background: T.surface,
+    background: T.surfaceGlass, // frosted glass — translucent surface over the tinted backdrop
+    backdropFilter: "blur(14px)",
+    WebkitBackdropFilter: "blur(14px)",
     display: "flex",
     alignItems: "flex-start",
     justifyContent: "space-between",
@@ -945,7 +956,7 @@ const sx: Record<string, React.CSSProperties> = {
   },
 
   // summary cards
-  cards: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 },
+  cards: { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 },
   card: {
     border: `1px solid ${T.border}`,
     borderRadius: 16,
@@ -961,7 +972,9 @@ const sx: Record<string, React.CSSProperties> = {
     border: `1px solid ${T.border}`,
     borderRadius: 18,
     padding: 16,
-    background: T.surface,
+    background: T.surfaceGlass, // frosted glass panels (report surfaces)
+    backdropFilter: "blur(14px)",
+    WebkitBackdropFilter: "blur(14px)",
     boxShadow: T.shadowSm,
   },
   panelHead: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },

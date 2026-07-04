@@ -16,16 +16,19 @@
  * that gradient is what gives each card its colored, depth-y header.
  */
 
-// ── type scale (LINE keyword sizes; bumped up for readability — the "Euneun" feel) ─────
+// ── type scale (LINE keyword sizes; COMPACT "Euneun" tuning — refined, one step down) ──
 // keyword → approx px on LINE: xxs 11 · xs 13 · sm 14 · md 16 · lg 19 · xl 22 · xxl 29
+// ต้น's call: the bumped-up scale (hero xxl/body md) read too large in-chat. This compact
+// scale keeps clear hierarchy (hero still the biggest) but tightens every line one notch —
+// the "กำลังสวย" Euneun size: crisp, dense, still legible on a phone.
 export const FS = {
-  hero: "xxl", // the single big number (net balance)
-  title: "xl", // card title in the gradient header
-  section: "md", // section heading inside the body ("รายจ่ายแยกหมวด")
-  body: "md", // primary row text (task / item name) — was sm
-  label: "md", // row label (รายรับ/รายจ่าย)
-  meta: "sm", // secondary line (category, count, due) — was xs/xxs
-  caption: "xs", // smallest useful text (bar %)
+  hero: "xl", // 22 — the single big number (net balance); still the visual anchor
+  title: "lg", // 19 — card title in the gradient header
+  section: "sm", // 14 — section heading inside the body ("รายจ่ายแยกหมวด")
+  body: "sm", // 14 — primary row text (task / item name); LINE's clean default
+  label: "sm", // 14 — row label (รายรับ/รายจ่าย)
+  meta: "xs", // 13 — secondary line (category, count, due)
+  caption: "xxs", // 11 — smallest useful text (bar %)
 } as const;
 
 // ── neutrals (shared light card body) ─────────────────────────────────────────────────
@@ -177,9 +180,9 @@ export function numberChip(n: number | string, accent: AccentTheme, dimmed = fal
   return {
     type: "box",
     layout: "vertical",
-    width: "30px",
-    height: "30px",
-    cornerRadius: "15px",
+    width: "26px", // tightened with the compact type scale (was 30px)
+    height: "26px",
+    cornerRadius: "13px",
     justifyContent: "center",
     backgroundColor: dimmed ? NEUTRAL.sep : accent.chipBg,
     contents: [
