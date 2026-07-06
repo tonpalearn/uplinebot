@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServiceClient } from "@/lib/db";
 import { decodeSlip } from "@/lib/payments/slip-decode";
+import { ocrSlipAmount } from "@/lib/payments/slip-ocr";
 import { PUBLIC_SUB_COLUMNS, type SubscriptionRow } from "@/lib/subscriptions";
 
 /**
@@ -16,6 +17,9 @@ import { PUBLIC_SUB_COLUMNS, type SubscriptionRow } from "@/lib/subscriptions";
  * client-sent amounts are never trusted. Runs on the default Node runtime (sharp needs it).
  */
 export const dynamic = "force-dynamic";
+// OCR on a cold start can be slow; give the function room on Pro. Harmless on Hobby (capped at
+// 10s) — ocrSlipAmount races an internal ~8s timeout so we degrade to manual before any 504.
+export const maxDuration = 60;
 
 // Reject oversized uploads before we spend CPU decoding. ~5MB of raw bytes.
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -115,7 +119,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: false, reason: "duplicate_slip" });
   }
 
-  // ── Record the slip ──────────────────────────────────────────────────────────────────────
+  // ── OCR the amount printed on the slip (never throws; ~8s internal timeout → null) ─────────
+  // This is the money gate: we auto-activate ONLY when the amount OCR read is >= the plan price,
+  // which closes the "฿1 unlocks Business" hole. A null/short read degrades to manual review.
+  const { detected } = await ocrSlipAmount(image);
+
+  // ── Record the slip (regardless of the gate outcome) ─────────────────────────────────────
+  // We store it even when the amount can't be verified, so (a) it can never be replayed, and
+  // (b) it shows in the admin console for a 1-click manual confirm. We persist the OCR amount.
   // A UNIQUE-constraint violation here (23505) means a concurrent request used the same slip
   // between our check above and this insert — treat it as the duplicate it is (race-safe).
   const { error: insErr } = await supabase.from("upl_payment_slips").insert({
@@ -123,6 +134,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     raw_qr: decoded.rawQr,
     trans_ref: decoded.transRef,
     sending_bank: decoded.sendingBank,
+    amount: detected,
     image_hash: decoded.imageHash,
     created_at: new Date().toISOString(),
   });
@@ -131,6 +143,18 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ ok: false, reason: "duplicate_slip" });
     }
     return NextResponse.json({ ok: false, reason: insErr.message }, { status: 500 });
+  }
+
+  // ── GATE: only activate when the OCR amount meets or exceeds the plan price ────────────────
+  // sub.amount is the price the customer must pay (set server-side at checkout; never client-sent).
+  if (detected == null || detected < sub.amount) {
+    return NextResponse.json({
+      ok: false,
+      reason: "amount_unverified",
+      needsManual: true,
+      detected,
+      expected: sub.amount,
+    });
   }
 
   // ── Activate the subscription ────────────────────────────────────────────────────────────
@@ -152,7 +176,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (updErr) return NextResponse.json({ ok: false, reason: updErr.message }, { status: 500 });
   if (!updated) return NextResponse.json({ ok: false, reason: "activation_failed" }, { status: 500 });
 
-  return NextResponse.json({ ok: true, subscription: updated as unknown as SubscriptionRow });
+  return NextResponse.json({
+    ok: true,
+    subscription: updated as unknown as SubscriptionRow,
+    detectedAmount: detected,
+  });
 }
 
 /**

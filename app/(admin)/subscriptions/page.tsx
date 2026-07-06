@@ -56,9 +56,27 @@ const FILTERS: { key: "" | SubStatus; label: string }[] = [
 ];
 
 const baht = (n: number) => "฿" + n.toLocaleString("th-TH");
+const baht2 = (n: number) => "฿" + n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 function fmtDateTime(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleString("th-TH", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+// Shows what OCR read from the slip vs the plan price, so the reviewer sees at a glance whether the
+// amount matched. Green when the read amount covers the price (would have auto-activated); amber
+// when it's short or couldn't be read (this is why it landed in manual review).
+function AmountHint({ detected, expected }: { detected: number | null; expected: number }) {
+  const ok = detected != null && detected >= expected;
+  const color = ok ? COLORS.green : COLORS.gold;
+  return (
+    <div style={{ color: COLORS.textMuted }}>
+      OCR:{" "}
+      <code style={{ color }}>{detected != null ? baht2(detected) : "— (อ่านไม่ได้)"}</code>
+      {" · ต้องชำระ "}
+      <code style={{ color: COLORS.textMain }}>{baht(expected)}</code>{" "}
+      <span style={{ color, fontWeight: 700 }}>{ok ? "✓ ตรง" : "⚠ ตรวจ"}</span>
+    </div>
+  );
 }
 
 class AdminApiError extends Error {
@@ -345,12 +363,9 @@ export default function SubscriptionsPage() {
                         </div>
                         <div style={{ color: COLORS.textMuted }}>
                           ธนาคาร: <code style={{ color: COLORS.textMain }}>{sl.sending_bank || "—"}</code>
-                          {sl.amount != null && (
-                            <>
-                              {" · "}ยอดในสลิป: <code style={{ color: COLORS.textMain }}>{baht(sl.amount)}</code>
-                            </>
-                          )}
                         </div>
+                        <AmountHint detected={sl.amount} expected={s.amount} />
+
                         <div style={{ color: COLORS.textMuted, wordBreak: "break-all" }}>
                           hash: <code style={{ color: COLORS.textMuted, fontSize: 11 }}>{sl.image_hash.slice(0, 24)}…</code>
                         </div>

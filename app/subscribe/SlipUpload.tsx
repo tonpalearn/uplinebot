@@ -15,6 +15,7 @@ type UploadState =
   | { kind: "success" }
   | { kind: "duplicate" }
   | { kind: "manual" } // no_qr or other soft failure → team will verify
+  | { kind: "amount" } // slip read OK but amount unclear / below the plan price → team will verify
   | { kind: "error"; message: string };
 
 // ~5MB cap mirrors the server guard; reject earlier for a friendlier message.
@@ -67,6 +68,7 @@ export default function SlipUpload({
       }
       const reason = json?.reason as string | undefined;
       if (reason === "duplicate_slip") setState({ kind: "duplicate" });
+      else if (reason === "amount_unverified") setState({ kind: "amount" });
       else if (reason === "no_qr") setState({ kind: "manual" });
       else setState({ kind: "manual" }); // any other soft failure → manual review, don't scare the user
     } catch {
@@ -134,6 +136,13 @@ function Feedback({ state }: { state: UploadState }) {
     return (
       <div style={{ marginTop: 10, padding: "10px 14px", borderRadius: 10, background: T.dangerWeak, color: T.danger, fontSize: "0.85rem", fontWeight: 600 }}>
         สลิปนี้ถูกใช้ไปแล้ว — กรุณาใช้สลิปการโอนของรายการนี้ หรือติดต่อทีมงาน
+      </div>
+    );
+  }
+  if (state.kind === "amount") {
+    return (
+      <div style={{ marginTop: 10, padding: "10px 14px", borderRadius: 10, background: "var(--surface-2)", color: T.muted, fontSize: "0.85rem" }}>
+        อ่านยอดจากสลิปไม่ชัด/ไม่ตรง — ทีมงานจะตรวจและเปิดใช้งานให้ภายใน 1 ชม.ทำการ
       </div>
     );
   }

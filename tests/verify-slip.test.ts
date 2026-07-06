@@ -34,6 +34,15 @@ vi.mock("../lib/payments/slip-decode", () => ({
   decodeSlip: vi.fn(async () => nextDecode),
 }));
 
+// ── Mock the OCR amount gate ─────────────────────────────────────────────────────────────
+// The route now OCRs the slip amount and only activates when detected >= sub.amount. We stub
+// ocrSlipAmount so tests control the detected amount without running tesseract. Default is high
+// enough (>= the seeded price 2990) so the existing "clean slip activates" cases stay green.
+let nextOcrDetected: number | null = 5000;
+vi.mock("../lib/payments/slip-ocr", () => ({
+  ocrSlipAmount: vi.fn(async () => ({ detected: nextOcrDetected, amounts: [], text: "" })),
+}));
+
 // ── In-memory DB state ───────────────────────────────────────────────────────────────────
 type Sub = {
   id: string;
@@ -56,6 +65,7 @@ type Slip = {
   raw_qr: string | null;
   trans_ref: string | null;
   sending_bank: string | null;
+  amount: number | null;
   image_hash: string;
 };
 
@@ -135,6 +145,7 @@ vi.mock("../lib/db", () => {
               raw_qr: (row.raw_qr as string | null) ?? null,
               trans_ref: (row.trans_ref as string | null) ?? null,
               sending_bank: (row.sending_bank as string | null) ?? null,
+              amount: (row.amount as number | null) ?? null,
               image_hash: String(row.image_hash),
             };
             slips.push(created);
@@ -209,6 +220,8 @@ beforeEach(() => {
     sendingBank: "A000000677010112",
     imageHash: "hash-default",
   };
+  // Default: OCR reads an amount comfortably above the seeded price (2990) so a clean slip activates.
+  nextOcrDetected = 5000;
 });
 
 describe("verify-slip — input guards", () => {
@@ -263,7 +276,7 @@ describe("verify-slip — activation on a clean slip", () => {
 describe("verify-slip — multi-layer anti-replay", () => {
   it("rejects a duplicate raw_qr (used on another subscription)", async () => {
     // Pre-existing slip on a different sub with the SAME raw_qr, different hash/ref.
-    slips = [{ id: "old", subscription_id: "sub-other", raw_qr: "RAWQR-DEFAULT", trans_ref: "OTHER", sending_bank: null, image_hash: "other-hash" }];
+    slips = [{ id: "old", subscription_id: "sub-other", raw_qr: "RAWQR-DEFAULT", trans_ref: "OTHER", sending_bank: null, amount: null, image_hash: "other-hash" }];
     const res = await POST(req({ token: "tok-1", image: IMAGE_B64 }));
     const json = await res.json();
     expect(json.ok).toBe(false);
@@ -274,7 +287,7 @@ describe("verify-slip — multi-layer anti-replay", () => {
 
   it("rejects a duplicate image_hash", async () => {
     nextDecode = { ...nextDecode, rawQr: "UNIQUE-QR", transRef: "UNIQUE-REF" };
-    slips = [{ id: "old", subscription_id: "sub-other", raw_qr: "SOMETHING-ELSE", trans_ref: "ELSE", sending_bank: null, image_hash: "hash-default" }];
+    slips = [{ id: "old", subscription_id: "sub-other", raw_qr: "SOMETHING-ELSE", trans_ref: "ELSE", sending_bank: null, amount: null, image_hash: "hash-default" }];
     const json = await (await POST(req({ token: "tok-1", image: IMAGE_B64 }))).json();
     expect(json.reason).toBe("duplicate_slip");
     expect(subs[0].status).toBe("pending");
@@ -282,7 +295,7 @@ describe("verify-slip — multi-layer anti-replay", () => {
 
   it("rejects a duplicate trans_ref", async () => {
     nextDecode = { ...nextDecode, rawQr: "UNIQUE-QR-2", imageHash: "unique-hash-2" };
-    slips = [{ id: "old", subscription_id: "sub-other", raw_qr: "OTHER-QR", trans_ref: "TXNREF-DEFAULT", sending_bank: null, image_hash: "another-hash" }];
+    slips = [{ id: "old", subscription_id: "sub-other", raw_qr: "OTHER-QR", trans_ref: "TXNREF-DEFAULT", sending_bank: null, amount: null, image_hash: "another-hash" }];
     const json = await (await POST(req({ token: "tok-1", image: IMAGE_B64 }))).json();
     expect(json.reason).toBe("duplicate_slip");
     expect(subs[0].status).toBe("pending");
@@ -291,7 +304,7 @@ describe("verify-slip — multi-layer anti-replay", () => {
   it("allows a slip whose transRef is null and does not false-match other null-ref slips", async () => {
     nextDecode = { foundQr: true, rawQr: "FRESH-QR", transRef: null, sendingBank: null, imageHash: "fresh-hash" };
     // An existing slip also has a null trans_ref — must NOT be treated as a duplicate.
-    slips = [{ id: "old", subscription_id: "sub-other", raw_qr: "DIFFERENT-QR", trans_ref: null, sending_bank: null, image_hash: "different-hash" }];
+    slips = [{ id: "old", subscription_id: "sub-other", raw_qr: "DIFFERENT-QR", trans_ref: null, sending_bank: null, amount: null, image_hash: "different-hash" }];
     const json = await (await POST(req({ token: "tok-1", image: IMAGE_B64 }))).json();
     expect(json.ok).toBe(true);
     expect(json.subscription.status).toBe("active");
@@ -308,5 +321,65 @@ describe("verify-slip — no QR leaves it pending", () => {
     expect(json.needsManual).toBe(true);
     expect(subs[0].status).toBe("pending");
     expect(slips).toHaveLength(0);
+  });
+});
+
+describe("verify-slip — OCR amount gate", () => {
+  it("activates when the OCR amount meets the plan price exactly", async () => {
+    // seeded price is 2990
+    nextOcrDetected = 2990;
+    const res = await POST(req({ token: "tok-1", image: IMAGE_B64 }));
+    const json = await res.json();
+    expect(res.status).toBe(200);
+    expect(json.ok).toBe(true);
+    expect(json.subscription.status).toBe("active");
+    expect(json.detectedAmount).toBe(2990);
+    // slip stored with the detected amount persisted
+    expect(slips).toHaveLength(1);
+    expect(slips[0].amount).toBe(2990);
+  });
+
+  it("activates when the OCR amount exceeds the plan price", async () => {
+    nextOcrDetected = 3500;
+    const json = await (await POST(req({ token: "tok-1", image: IMAGE_B64 }))).json();
+    expect(json.ok).toBe(true);
+    expect(json.subscription.status).toBe("active");
+  });
+
+  it("does NOT activate when the OCR amount is BELOW the plan price (the ฿1 hole)", async () => {
+    nextOcrDetected = 1; // the classic "฿1 unlocks Business" attempt
+    const res = await POST(req({ token: "tok-1", image: IMAGE_B64 }));
+    const json = await res.json();
+    expect(json.ok).toBe(false);
+    expect(json.reason).toBe("amount_unverified");
+    expect(json.needsManual).toBe(true);
+    expect(json.detected).toBe(1);
+    expect(json.expected).toBe(2990);
+    // sub stays pending, but the slip IS still recorded (anti-replay + manual review)
+    expect(subs[0].status).toBe("pending");
+    expect(slips).toHaveLength(1);
+    expect(slips[0].amount).toBe(1);
+  });
+
+  it("does NOT activate when OCR could not read an amount (null) — records slip, stays pending", async () => {
+    nextOcrDetected = null;
+    const res = await POST(req({ token: "tok-1", image: IMAGE_B64 }));
+    const json = await res.json();
+    expect(json.ok).toBe(false);
+    expect(json.reason).toBe("amount_unverified");
+    expect(json.needsManual).toBe(true);
+    expect(json.detected).toBeNull();
+    expect(subs[0].status).toBe("pending");
+    expect(slips).toHaveLength(1);
+    expect(slips[0].amount).toBeNull();
+  });
+
+  it("still rejects a duplicate slip BEFORE the amount gate (dedupe takes precedence)", async () => {
+    // Even with a passing amount, a replayed slip must be rejected as duplicate, not activated.
+    nextOcrDetected = 9999;
+    slips = [{ id: "old", subscription_id: "sub-other", raw_qr: "RAWQR-DEFAULT", trans_ref: "OTHER", sending_bank: null, amount: 9999, image_hash: "other-hash" }];
+    const json = await (await POST(req({ token: "tok-1", image: IMAGE_B64 }))).json();
+    expect(json.reason).toBe("duplicate_slip");
+    expect(subs[0].status).toBe("pending");
   });
 });
