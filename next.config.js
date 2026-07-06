@@ -21,11 +21,11 @@ const nextConfig = {
         // Whole eng data package — the .gz (read via langPath) PLUS index.js/package.json so
         // `require.resolve("@tesseract.js-data/eng")` (in engLangDir) works in the traced function.
         "./node_modules/@tesseract.js-data/eng/**",
-        // Only the LSTM core variants are ever loaded at oem=1 (getCore picks relaxedsimd / simd /
-        // plain -lstm by CPU wasm-feature detection), so we ship just those (~20M) — not the full
-        // 43M of core (the non-LSTM variants would only load at oem=0, which we never use).
-        "./node_modules/tesseract.js-core/*-lstm.*",
-        "./node_modules/tesseract.js-core/package.json",
+        // Ship ALL core variants + their .wasm. tesseract picks a core by CPU wasm-feature detection
+        // at RUNTIME (e.g. tesseract-core-relaxedsimd.wasm) — a narrower glob left the actually-loaded
+        // .wasm missing → "failed to prepare wasm: ENOENT …relaxedsimd.wasm" → an UNCAUGHT wasm abort
+        // that crashed the function (exit 129). The full core dir (~43M) stays well under the 250M limit.
+        "./node_modules/tesseract.js-core/**",
         // The worker_threads entry tesseract spawns in Node.
         "./node_modules/tesseract.js/src/worker-script/**",
       ],
