@@ -1,5 +1,5 @@
-import { dirname, join } from "path";
-import { createRequire } from "module";
+import { join } from "path";
+import { existsSync } from "fs";
 import sharp from "sharp";
 
 /**
@@ -124,14 +124,21 @@ let workerPromise: Promise<TesseractWorker> | null = null;
 
 /** Local directory holding the bundled `eng.traineddata.gz` — passed to tesseract as `langPath`. */
 function engLangDir(): string {
-  // Resolve the package via its JS main (`@tesseract.js-data/eng` → index.js), then join the data
-  // subdir. We must NOT `require.resolve` the binary `.gz` directly: webpack statically analyzes
-  // `require.resolve(<literal>)` and tries to PARSE the .gz as a module → `next build` fails with
-  // "Module parse failed: Unexpected character". Resolving the JS main is safe; the .gz (under 4.0.0/)
-  // is shipped into the function via outputFileTracingIncludes (next.config.js) and read off disk here.
-  const req = createRequire(__filename);
-  const pkgRoot = dirname(req.resolve("@tesseract.js-data/eng"));
-  return join(pkgRoot, "4.0.0");
+  // Locate the traineddata dir WITHOUT require.resolve. Under webpack, `createRequire(__filename)
+  // .resolve("pkg")` gets rewritten to return a NUMERIC module id (e.g. 5041), not a path — so
+  // `dirname(id)` throws 'The "path" argument must be of type string'. And `require.resolve` of the
+  // .gz itself makes webpack try to PARSE the binary at build time. So we take neither: the data
+  // package is shipped verbatim into the function (outputFileTracingIncludes → next.config.js), and
+  // we compute the on-disk path directly, picking the first candidate that actually holds the .gz.
+  const candidates = [
+    join(process.cwd(), "node_modules/@tesseract.js-data/eng/4.0.0"), // Vercel: cwd = /var/task
+    join(__dirname, "../../node_modules/@tesseract.js-data/eng/4.0.0"), // near the compiled route file
+    join(__dirname, "../../../node_modules/@tesseract.js-data/eng/4.0.0"),
+  ];
+  for (const dir of candidates) {
+    if (existsSync(join(dir, "eng.traineddata.gz"))) return dir;
+  }
+  return candidates[0]; // best guess; a wrong path just fails init → OCR null → manual (fail-safe)
 }
 
 async function getWorker(): Promise<TesseractWorker> {
