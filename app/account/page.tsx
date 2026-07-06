@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { T } from "../ui-theme";
+import SlipUpload from "../subscribe/SlipUpload";
 
 const baht = (n: number) => "฿" + n.toLocaleString("th-TH");
 
@@ -161,6 +162,8 @@ export default function AccountPage() {
                 <div style={{ fontWeight: 800, color: T.fgStrong, marginBottom: 4 }}>ชำระเงินเพื่อเปิดใช้งาน</div>
                 <p style={{ color: T.muted, fontSize: "0.88rem", marginBottom: 14 }}>สแกน PromptPay ยอด {baht(sub.amount)} — จ่ายแล้วทีมงานยืนยันภายใน 1 ชม.ทำการ</p>
                 <div style={{ background: "#fff", padding: 12, borderRadius: 14, width: 200, height: 200, display: "grid", placeItems: "center" }} dangerouslySetInnerHTML={{ __html: qr.svg }} />
+                {/* Auto-verify: decode the slip's QR ourselves and activate (no paid API). */}
+                <SlipUpload manageToken={sub.manage_token} onActivated={() => token && load(token)} />
               </div>
             )}
           </div>

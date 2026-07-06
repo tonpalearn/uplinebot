@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { T } from "../ui-theme";
+import SlipUpload from "./SlipUpload";
 
 type Cycle = "monthly" | "yearly";
 type PlanKey = "starter" | "pro" | "business";
@@ -221,6 +222,9 @@ function PayView({ sub, qr }: { sub: Sub; qr: Qr | null }) {
           )}
         </div>
       </div>
+
+      {/* Auto-verify: upload the PromptPay slip and we activate on our own QR decode (no paid API). */}
+      {qr && <SlipUpload manageToken={sub.manage_token} onActivated={() => window.location.assign(manageUrl)} />}
 
       <div style={{ marginTop: 18, padding: 16, borderRadius: T.radius, background: T.primaryWeak, border: `1px solid ${T.border}` }}>
         <div style={{ fontWeight: 700, color: T.fgStrong, marginBottom: 4 }}>เก็บลิงก์นี้ไว้จัดการสมาชิก</div>
