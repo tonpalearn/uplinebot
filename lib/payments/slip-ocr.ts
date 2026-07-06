@@ -1,4 +1,4 @@
-import { dirname } from "path";
+import { dirname, join } from "path";
 import { createRequire } from "module";
 import sharp from "sharp";
 
@@ -124,10 +124,14 @@ let workerPromise: Promise<TesseractWorker> | null = null;
 
 /** Local directory holding the bundled `eng.traineddata.gz` — passed to tesseract as `langPath`. */
 function engLangDir(): string {
-  // Resolve via the installed package so it works under the Next bundler and plain Node alike.
-  // The directory is force-bundled into the function via outputFileTracingIncludes (next.config.js).
+  // Resolve the package via its JS main (`@tesseract.js-data/eng` → index.js), then join the data
+  // subdir. We must NOT `require.resolve` the binary `.gz` directly: webpack statically analyzes
+  // `require.resolve(<literal>)` and tries to PARSE the .gz as a module → `next build` fails with
+  // "Module parse failed: Unexpected character". Resolving the JS main is safe; the .gz (under 4.0.0/)
+  // is shipped into the function via outputFileTracingIncludes (next.config.js) and read off disk here.
   const req = createRequire(__filename);
-  return dirname(req.resolve("@tesseract.js-data/eng/4.0.0/eng.traineddata.gz"));
+  const pkgRoot = dirname(req.resolve("@tesseract.js-data/eng"));
+  return join(pkgRoot, "4.0.0");
 }
 
 async function getWorker(): Promise<TesseractWorker> {

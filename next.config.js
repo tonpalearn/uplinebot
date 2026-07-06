@@ -3,6 +3,12 @@ const nextConfig = {
   reactStrictMode: true,
 
   experimental: {
+    // Keep the OCR stack OUT of the webpack bundle — load it via a plain Node require at runtime.
+    // Without this, webpack follows slip-ocr.ts's `require.resolve('…/eng.traineddata.gz')` and tries
+    // to PARSE the binary .gz as a module → "Module parse failed: Unexpected character" → build fails.
+    // Marking them external (+ the tracing includes below shipping the files) is the working combo.
+    serverComponentsExternalPackages: ["tesseract.js", "tesseract.js-core", "@tesseract.js-data/eng"],
+
     // Force these non-JS / dynamically-required assets into the verify-slip serverless function
     // so the OCR amount gate (lib/payments/slip-ocr.ts) needs ZERO runtime downloads on Vercel:
     //   • @tesseract.js-data/eng .......... the bundled eng.traineddata.gz we read with fs
