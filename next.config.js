@@ -18,8 +18,9 @@ const nextConfig = {
     // so we include them explicitly. Globs are relative to the project root.
     outputFileTracingIncludes: {
       "/api/subscribe/verify-slip": [
-        // eng LSTM traineddata (.gz) — read off disk via langPath.
-        "./node_modules/@tesseract.js-data/eng/4.0.0/**",
+        // Whole eng data package — the .gz (read via langPath) PLUS index.js/package.json so
+        // `require.resolve("@tesseract.js-data/eng")` (in engLangDir) works in the traced function.
+        "./node_modules/@tesseract.js-data/eng/**",
         // Only the LSTM core variants are ever loaded at oem=1 (getCore picks relaxedsimd / simd /
         // plain -lstm by CPU wasm-feature detection), so we ship just those (~20M) — not the full
         // 43M of core (the non-LSTM variants would only load at oem=0, which we never use).

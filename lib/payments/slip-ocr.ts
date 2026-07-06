@@ -166,6 +166,8 @@ async function getWorker(): Promise<TesseractWorker> {
     })().catch((err) => {
       // Reset so a later (warm) request can retry init instead of being stuck on a failed promise.
       workerPromise = null;
+      // Surface WHY init failed (bundling/path/worker issues only show on the serverless runtime).
+      console.error("[slip-ocr] worker init failed:", err instanceof Error ? err.stack || err.message : err);
       throw err;
     });
   }
@@ -221,8 +223,16 @@ export async function ocrSlipAmount(image: Buffer): Promise<OcrAmountResult> {
   };
 
   try {
-    return await withTimeout(run(), OCR_TIMEOUT_MS, () => empty);
-  } catch {
+    const guarded = run().catch((err) => {
+      console.error("[slip-ocr] recognize failed:", err instanceof Error ? err.stack || err.message : err);
+      return empty;
+    });
+    return await withTimeout(guarded, OCR_TIMEOUT_MS, () => {
+      console.error("[slip-ocr] timed out after", OCR_TIMEOUT_MS, "ms");
+      return empty;
+    });
+  } catch (err) {
+    console.error("[slip-ocr] unexpected:", err instanceof Error ? err.stack || err.message : err);
     return empty;
   }
 }
