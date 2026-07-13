@@ -2,6 +2,7 @@ import { AssistantModule } from "./assistant/handler";
 import { BroadcastModule } from "./broadcast/handler";
 import { SlipVerificationModule } from "./slip-verification/handler";
 import { ExpenseTrackerModule } from "./expense-tracker/handler";
+import { KnowledgeBaseModule } from "./knowledge-base/handler";
 import { isModuleEntitled } from "../entitlement";
 import type { LineEvent, ModuleHandler, OutboundMessage, TenantContext } from "./types";
 import { getServiceClient } from "../db";
@@ -19,6 +20,7 @@ export const MODULE_REGISTRY: Record<string, ModuleHandler> = {
   broadcast_campaigns: BroadcastModule,
   slip_verification: SlipVerificationModule,
   expense_tracker: ExpenseTrackerModule,
+  faq_rag_support: KnowledgeBaseModule,
   // ...remaining modules added as built, per SPEC.md §16 roadmap (P3/P4).
 };
 
@@ -39,6 +41,10 @@ const ROUTER_PRIORITY: string[] = [
   // else (money lines like "กาแฟ 50", and สรุป/รายงาน/ยกเลิก) falls through to Expense Tracker.
   "assistant_productivity",
   "expense_tracker",
+  // Knowledge Base is LAST: its "ถาม"/"สอน"/"คลังความรู้" keywords only get a shot once no other
+  // module claimed the message, and with config.answer_all it becomes the final catch-all (a
+  // dedicated support bot answering any text) — so it must never pre-empt slip/broadcast/todo/expense.
+  "faq_rag_support",
 ];
 
 async function loadModuleConfig(targetId: string, moduleKey: string): Promise<Record<string, unknown>> {

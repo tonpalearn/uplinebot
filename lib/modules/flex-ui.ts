@@ -74,6 +74,18 @@ export const MONEY_ACCENT: AccentTheme = {
   chipText: "#047857",
 };
 
+/** KNOWLEDGE / FAQ = GREEN / leaf — the คลังความรู้ (ถาม-ตอบ) identity. A truer green than the
+ *  money emerald so a Q&A answer card reads distinct from a bookkeeping card. */
+export const KM_ACCENT: AccentTheme = {
+  gradStart: "#22C55E", // green-500
+  gradEnd: "#15803D", // green-700
+  solid: "#16A34A", // green-600
+  onAccent: "#FFFFFF",
+  onAccentMuted: "#DCFCE7", // green-100
+  chipBg: "#DCFCE7",
+  chipText: "#15803D",
+};
+
 /** Money DIRECTION colors — semantic, independent of the header accent. */
 export const MONEY = {
   income: "#059669", // green (+)
