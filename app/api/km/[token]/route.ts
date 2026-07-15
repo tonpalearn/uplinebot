@@ -23,9 +23,9 @@ export const dynamic = "force-dynamic";
  *
  *   GET                       → { ok, entries, unanswered }
  *   GET ?q=<query>            → { ok, results: [{id,question,answer,source,score}] }  (test-query preview)
- *   POST { question, answer, keywords? }   → add one entry            → { ok, entry }
+ *   POST { question, answer, keywords?, trigger_keywords? }   → add one entry   → { ok, entry }
  *   POST { document: "<text>" }            → chunk → bulk add         → { ok, added, entries }
- *   PATCH { id, question?, answer?, keywords?, enabled? }             → { ok, entry }
+ *   PATCH { id, question?, answer?, keywords?, trigger_keywords?, enabled? }   → { ok, entry }
  *   PATCH { unansweredId, answer, question? } → resolve into an entry → { ok, entry }
  *   DELETE { id } (or ?id=)                → delete an entry          → { ok, id }
  */
@@ -66,6 +66,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx): Promise<NextRespons
     question?: unknown;
     answer?: unknown;
     keywords?: unknown;
+    trigger_keywords?: unknown;
     document?: unknown;
   };
   try {
@@ -91,6 +92,8 @@ export async function POST(req: NextRequest, ctx: RouteCtx): Promise<NextRespons
   const question = typeof body.question === "string" ? body.question.trim() : "";
   const answer = typeof body.answer === "string" ? body.answer.trim() : "";
   const keywords = typeof body.keywords === "string" ? body.keywords.trim() : undefined;
+  const trigger_keywords =
+    typeof body.trigger_keywords === "string" ? body.trigger_keywords.trim() : undefined;
   if (!question || !answer) {
     return NextResponse.json(
       { ok: false, reason: "question and answer are required" },
@@ -98,7 +101,13 @@ export async function POST(req: NextRequest, ctx: RouteCtx): Promise<NextRespons
     );
   }
 
-  const entry = await addEntry(auth.tenantId, { question, answer, keywords, source: "manual" });
+  const entry = await addEntry(auth.tenantId, {
+    question,
+    answer,
+    keywords,
+    trigger_keywords,
+    source: "manual",
+  });
   return NextResponse.json({ ok: true, entry });
 }
 
@@ -112,6 +121,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx): Promise<NextRespon
     question?: unknown;
     answer?: unknown;
     keywords?: unknown;
+    trigger_keywords?: unknown;
     enabled?: unknown;
     unansweredId?: unknown;
   };
@@ -146,11 +156,13 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx): Promise<NextRespon
     question?: string;
     answer?: string;
     keywords?: string | null;
+    trigger_keywords?: string | null;
     enabled?: boolean;
   } = {};
   if (typeof body.question === "string") patch.question = body.question;
   if (typeof body.answer === "string") patch.answer = body.answer;
   if (typeof body.keywords === "string") patch.keywords = body.keywords;
+  if (typeof body.trigger_keywords === "string") patch.trigger_keywords = body.trigger_keywords;
   if (typeof body.enabled === "boolean") patch.enabled = body.enabled;
 
   if (Object.keys(patch).length === 0) {

@@ -21,6 +21,7 @@ interface Entry {
   question: string;
   answer: string;
   keywords: string | null;
+  trigger_keywords: string | null;
   source: string;
   enabled: boolean;
   created_at: string;
@@ -93,11 +94,16 @@ export default function KmPage({ params }: { params: { token: string } }) {
   }, [load]);
 
   const addEntry = useCallback(
-    async (question: string, answer: string, keywords: string) => {
+    async (question: string, answer: string, keywords: string, triggerKeywords: string) => {
       const res = await fetch(apiBase, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, answer, keywords: keywords || undefined }),
+        body: JSON.stringify({
+          question,
+          answer,
+          keywords: keywords || undefined,
+          trigger_keywords: triggerKeywords || undefined,
+        }),
       });
       if (res.ok) load();
       return res.ok;
@@ -106,7 +112,10 @@ export default function KmPage({ params }: { params: { token: string } }) {
   );
 
   const saveEntry = useCallback(
-    async (id: string, patch: Partial<Pick<Entry, "question" | "answer" | "keywords" | "enabled">>) => {
+    async (
+      id: string,
+      patch: Partial<Pick<Entry, "question" | "answer" | "keywords" | "trigger_keywords" | "enabled">>
+    ) => {
       const res = await fetch(apiBase, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -215,22 +224,24 @@ function Header({ count, loading, onRefresh }: { count: number; loading: boolean
 function AddEntryForm({
   onAdd,
 }: {
-  onAdd: (question: string, answer: string, keywords: string) => Promise<boolean>;
+  onAdd: (question: string, answer: string, keywords: string, triggerKeywords: string) => Promise<boolean>;
 }) {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [keywords, setKeywords] = useState("");
+  const [trigger, setTrigger] = useState("");
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
     if (!question.trim() || !answer.trim()) return;
     setBusy(true);
-    const ok = await onAdd(question.trim(), answer.trim(), keywords.trim());
+    const ok = await onAdd(question.trim(), answer.trim(), keywords.trim(), trigger.trim());
     setBusy(false);
     if (ok) {
       setQuestion("");
       setAnswer("");
       setKeywords("");
+      setTrigger("");
     }
   };
 
@@ -260,6 +271,18 @@ function AddEntryForm({
           style={sx.input}
           aria-label="คำค้นเพิ่มเติม"
         />
+        <div style={sx.field}>
+          <label style={sx.fieldLabel}>⚡ คำที่พิมพ์แล้วตอบทันที (ไม่ต้องมี ถาม)</label>
+          <textarea
+            value={trigger}
+            onChange={(e) => setTrigger(e.target.value)}
+            placeholder="เช่น opb2026, โปรโมชั่น"
+            style={{ ...sx.textarea, minHeight: 44 }}
+            rows={2}
+            aria-label="คำที่พิมพ์แล้วตอบทันที"
+          />
+          <div style={sx.hint}>คั่นด้วย , หรือขึ้นบรรทัดใหม่ · เช่น opb2026, โปรโมชั่น</div>
+        </div>
         <div style={sx.formActions}>
           <button style={sx.primaryBtn} onClick={submit} disabled={busy || !question.trim() || !answer.trim()}>
             {busy ? "กำลังบันทึก…" : "+ เพิ่มความรู้"}
@@ -481,7 +504,7 @@ function EntriesList({
   entries: Entry[];
   onSave: (
     id: string,
-    patch: Partial<Pick<Entry, "question" | "answer" | "keywords" | "enabled">>
+    patch: Partial<Pick<Entry, "question" | "answer" | "keywords" | "trigger_keywords" | "enabled">>
   ) => Promise<boolean>;
   onDelete: (id: string) => void;
 }) {

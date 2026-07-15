@@ -18,6 +18,12 @@ export interface KmEntry {
   question: string;
   answer: string;
   keywords: string | null;
+  /**
+   * Exact-match triggers (one per line OR comma-separated) — a message that EXACTLY equals any
+   * of these (trimmed, case-insensitive) is answered directly, with NO "ถาม" prefix needed.
+   * Matched by the km_exact() SQL function (migration 0011). null = no triggers on this entry.
+   */
+  trigger_keywords: string | null;
   source: string;
   enabled: boolean;
   created_at: string;
@@ -33,10 +39,19 @@ export interface KmSearchHit {
   score: number;
 }
 
+/** The entry an exact trigger resolves to (km_exact() row) — no score, it's an exact hit. */
+export interface KmExactHit {
+  id: string;
+  question: string;
+  answer: string;
+  source: string;
+}
+
 export interface KmEntryInput {
   question: string;
   answer: string;
   keywords?: string | null;
+  trigger_keywords?: string | null;
   source?: string;
 }
 
@@ -44,6 +59,7 @@ export interface KmEntryPatch {
   question?: string;
   answer?: string;
   keywords?: string | null;
+  trigger_keywords?: string | null;
   enabled?: boolean;
 }
 
@@ -65,7 +81,7 @@ export const KM_MATCH_THRESHOLD = 0.12;
 const UNANSWERED_DEDUP_THRESHOLD = 0.5;
 
 const ENTRY_COLUMNS =
-  "id, tenant_id, question, answer, keywords, source, enabled, created_at, updated_at";
+  "id, tenant_id, question, answer, keywords, trigger_keywords, source, enabled, created_at, updated_at";
 
 // ── writes ───────────────────────────────────────────────────────────────────────────────────
 
@@ -77,6 +93,7 @@ export async function addEntry(tenantId: string, input: KmEntryInput): Promise<K
     question: input.question.trim(),
     answer: input.answer.trim(),
     keywords: input.keywords?.trim() || null,
+    trigger_keywords: input.trigger_keywords?.trim() || null,
     source: input.source?.trim() || "manual",
   };
 
@@ -100,6 +117,7 @@ export async function addEntries(tenantId: string, inputs: KmEntryInput[]): Prom
       question: (i.question ?? "").trim(),
       answer: (i.answer ?? "").trim(),
       keywords: i.keywords?.trim() || null,
+      trigger_keywords: i.trigger_keywords?.trim() || null,
       source: i.source?.trim() || "manual",
     }))
     .filter((r) => r.question && r.answer);
@@ -128,6 +146,8 @@ export async function updateEntry(
   if (patch.question !== undefined) patchRow.question = patch.question.trim();
   if (patch.answer !== undefined) patchRow.answer = patch.answer.trim();
   if (patch.keywords !== undefined) patchRow.keywords = patch.keywords?.trim() || null;
+  if (patch.trigger_keywords !== undefined)
+    patchRow.trigger_keywords = patch.trigger_keywords?.trim() || null;
   if (patch.enabled !== undefined) patchRow.enabled = patch.enabled;
 
   const supabase = getServiceClient();
@@ -204,6 +224,29 @@ export async function searchKb(
 
   const hits = (data ?? []) as unknown as KmSearchHit[];
   return hits.filter((h) => typeof h.score === "number" && h.score >= KM_MATCH_THRESHOLD);
+}
+
+/**
+ * หา entry ที่ "คำที่พิมพ์มาตรงเป๊ะ" กับ trigger keyword ตัวใดตัวหนึ่ง (ผ่าน km_exact RPC, migration 0011)
+ * — trim + lowercase แล้วเทียบทั้งคำ (ไม่ใช่ substring). ใช้ตอบทันทีโดยไม่ต้องมีคำนำหน้า "ถาม".
+ * text ว่าง → null; ไม่มีตัวไหนตรง → null (เพื่อให้บอทเงียบกับข้อความทั่วไปที่ไม่ใช่ trigger).
+ */
+export async function matchExactTrigger(
+  tenantId: string,
+  text: string
+): Promise<KmExactHit | null> {
+  const t = (text ?? "").trim();
+  if (!t) return null;
+
+  const supabase = getServiceClient();
+  const { data, error } = await supabase.rpc("km_exact", { p_tenant: tenantId, p_text: t });
+
+  if (error) {
+    throw new Error(`km_exact failed for tenant ${tenantId}: ${error.message}`);
+  }
+
+  const rows = (data ?? []) as unknown as KmExactHit[];
+  return rows[0] ?? null;
 }
 
 // ── unanswered queue (learning loop) ───────────────────────────────────────────────────────────
