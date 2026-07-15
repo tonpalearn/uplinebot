@@ -180,3 +180,95 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   return NextResponse.json({ ok: true, tenants: result });
 }
+
+interface UpdateTenantBody {
+  id: string;
+  name?: string;
+  plan_tier?: PlanTier;
+}
+
+// PATCH — edit a customer (tenant): rename or change plan tier. Only provided fields change.
+export async function PATCH(req: NextRequest): Promise<NextResponse> {
+  try {
+    requireAdmin(req);
+  } catch (err) {
+    if (err instanceof AdminAuthError) {
+      return NextResponse.json({ ok: false, reason: "unauthorized" }, { status: 401 });
+    }
+    throw err;
+  }
+
+  let body: UpdateTenantBody;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ ok: false, reason: "invalid_json" }, { status: 400 });
+  }
+
+  const id = typeof body.id === "string" ? body.id.trim() : "";
+  if (!id) return NextResponse.json({ ok: false, reason: "id is required" }, { status: 400 });
+
+  const patch: Record<string, unknown> = {};
+  if (typeof body.name === "string" && body.name.trim()) patch.name = body.name.trim();
+  if (body.plan_tier !== undefined) {
+    if (!PLAN_TIERS.includes(body.plan_tier)) {
+      return NextResponse.json(
+        { ok: false, reason: "plan_tier must be one of starter|pro|business" },
+        { status: 400 }
+      );
+    }
+    patch.plan_tier = body.plan_tier;
+  }
+  if (Object.keys(patch).length === 0) {
+    return NextResponse.json({ ok: false, reason: "no updatable fields provided" }, { status: 400 });
+  }
+
+  const supabase = getServiceClient();
+  const { data, error } = await supabase
+    .from("upl_tenants")
+    .update(patch)
+    .eq("id", id)
+    .select("id, name, plan_tier, trial_ends_at, created_at")
+    .maybeSingle();
+
+  if (error) return NextResponse.json({ ok: false, reason: error.message }, { status: 500 });
+  if (!data) return NextResponse.json({ ok: false, reason: "not_found" }, { status: 404 });
+  return NextResponse.json({ ok: true, tenant: data });
+}
+
+// DELETE — remove a customer (tenant) entirely. DESTRUCTIVE + irreversible: FKs are ON DELETE
+// CASCADE, so this also drops the tenant's bots (+ their targets/todos/ledger/KM), module
+// entitlements, KM, logs, etc. Self-serve payment rows (upl_customer_subscriptions.tenant_id)
+// are SET NULL, so the payment history is preserved rather than deleted.
+export async function DELETE(req: NextRequest): Promise<NextResponse> {
+  try {
+    requireAdmin(req);
+  } catch (err) {
+    if (err instanceof AdminAuthError) {
+      return NextResponse.json({ ok: false, reason: "unauthorized" }, { status: 401 });
+    }
+    throw err;
+  }
+
+  let body: { id?: unknown };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ ok: false, reason: "invalid_json" }, { status: 400 });
+  }
+
+  const id = typeof body.id === "string" ? body.id.trim() : "";
+  if (!id) return NextResponse.json({ ok: false, reason: "id is required" }, { status: 400 });
+
+  const supabase = getServiceClient();
+  const { data, error } = await supabase
+    .from("upl_tenants")
+    .delete()
+    .eq("id", id)
+    .select("id, name")
+    .maybeSingle();
+
+  if (error) return NextResponse.json({ ok: false, reason: error.message }, { status: 500 });
+  if (!data) return NextResponse.json({ ok: false, reason: "not_found" }, { status: 404 });
+  return NextResponse.json({ ok: true, deleted: data });
+}

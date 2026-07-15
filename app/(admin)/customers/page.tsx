@@ -250,28 +250,20 @@ export default function CustomersPage() {
           const enabledSet = new Set(t.module_keys);
           return (
             <Panel key={t.id}>
-              {/* Tenant header */}
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>{t.name}</h2>
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 700,
-                      textTransform: "uppercase",
-                      color: "var(--primary-fg)",
-                      background: TIER_COLOR[t.plan_tier],
-                      borderRadius: 999,
-                      padding: "2px 9px",
-                    }}
-                  >
-                    {t.plan_tier}
-                  </span>
-                </div>
-                <span style={{ fontSize: 12, color: COLORS.textMuted }}>
-                  สร้าง {new Date(t.created_at).toLocaleDateString("th-TH")}
-                </span>
-              </div>
+              {/* Tenant header — rename / change tier / delete customer */}
+              <TenantHeader
+                tenant={t}
+                adminFetch={adminFetch}
+                onSaved={(u) => setTenants((prev) => prev.map((x) => (x.id === u.id ? { ...x, ...u } : x)))}
+                onDeleted={(id) => {
+                  setTenants((prev) => prev.filter((x) => x.id !== id));
+                  setBotsByTenant((prev) => {
+                    const next = { ...prev };
+                    delete next[id];
+                    return next;
+                  });
+                }}
+              />
 
               {/* Connected LINE OA */}
               <div style={{ marginTop: 14 }}>
@@ -365,6 +357,215 @@ export default function CustomersPage() {
   );
 }
 
+// Tenant header — view name + tier, or edit (rename / change plan tier) and delete the customer.
+// Delete is DESTRUCTIVE (cascades to the tenant's bots, todos, ledger, KM, entitlements, logs);
+// guarded by a two-step inline confirm (no browser confirm() which some webviews block).
+function TenantHeader({
+  tenant,
+  adminFetch,
+  onSaved,
+  onDeleted,
+}: {
+  tenant: Tenant;
+  adminFetch: AdminFetch;
+  onSaved: (t: Tenant) => void;
+  onDeleted: (id: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(tenant.name);
+  const [tier, setTier] = useState<PlanTier>(tenant.plan_tier);
+  const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const save = async () => {
+    if (!name.trim()) {
+      setErr("ชื่อห้ามว่าง");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      const j = await adminFetch("/api/admin/tenants", {
+        method: "PATCH",
+        body: JSON.stringify({ id: tenant.id, name: name.trim(), plan_tier: tier }),
+      });
+      onSaved({ ...tenant, ...(j.tenant as Tenant) });
+      setEditing(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "บันทึกไม่สำเร็จ");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await adminFetch("/api/admin/tenants", { method: "DELETE", body: JSON.stringify({ id: tenant.id }) });
+      onDeleted(tenant.id);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "ลบไม่สำเร็จ");
+      setBusy(false);
+      setConfirming(false);
+    }
+  };
+
+  if (editing) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 12, borderRadius: 10, background: "var(--surface-2)", border: `1px solid ${COLORS.blue}` }}>
+        <div>
+          <label style={{ fontSize: 12, fontWeight: 600 }}>ชื่อลูกค้า / ธุรกิจ</label>
+          <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="ชื่อลูกค้า" />
+        </div>
+        <div>
+          <label style={{ fontSize: 12, fontWeight: 600 }}>แพ็กเกจ</label>
+          <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+            {(["starter", "pro", "business"] as PlanTier[]).map((p) => {
+              const on = tier === p;
+              return (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setTier(p)}
+                  style={{
+                    padding: "7px 14px",
+                    borderRadius: 8,
+                    border: `1px solid ${on ? TIER_COLOR[p] : COLORS.border}`,
+                    background: on ? "var(--primary-weak)" : "transparent",
+                    color: on ? TIER_COLOR[p] : COLORS.textMuted,
+                    fontWeight: 700,
+                    fontSize: 12,
+                    textTransform: "uppercase",
+                    cursor: "pointer",
+                  }}
+                >
+                  {p}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        {err && <div style={{ color: COLORS.danger, fontSize: 13 }}>{err}</div>}
+        <div style={{ display: "flex", gap: 10 }}>
+          <Button variant="primary" onClick={save} disabled={busy}>
+            {busy ? "กำลังบันทึก…" : "บันทึก"}
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() => {
+              setEditing(false);
+              setName(tenant.name);
+              setTier(tenant.plan_tier);
+              setErr(null);
+            }}
+          >
+            ยกเลิก
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>{tenant.name}</h2>
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 700,
+            textTransform: "uppercase",
+            color: "var(--primary-fg)",
+            background: TIER_COLOR[tenant.plan_tier],
+            borderRadius: 999,
+            padding: "2px 9px",
+          }}
+        >
+          {tenant.plan_tier}
+        </span>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12, color: COLORS.textMuted }}>สร้าง {new Date(tenant.created_at).toLocaleDateString("th-TH")}</span>
+        <Button variant="ghost" onClick={() => setEditing(true)}>
+          ✏️ แก้ไข
+        </Button>
+        {confirming ? (
+          <>
+            <span style={{ fontSize: 12, color: COLORS.danger, fontWeight: 600 }}>ลบลูกค้า+บอท+ข้อมูลทั้งหมด?</span>
+            <button
+              type="button"
+              onClick={remove}
+              disabled={busy}
+              style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: COLORS.danger, color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+            >
+              {busy ? "กำลังลบ…" : "ยืนยันลบ"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirming(false)}
+              style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${COLORS.border}`, background: "transparent", color: COLORS.textMuted, fontSize: 12, cursor: "pointer" }}
+            >
+              ยกเลิก
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${COLORS.danger}`, background: "transparent", color: COLORS.danger, fontWeight: 600, fontSize: 12, cursor: "pointer" }}
+          >
+            🗑 ลบ
+          </button>
+        )}
+      </div>
+      {err && <div style={{ color: COLORS.danger, fontSize: 13, width: "100%" }}>{err}</div>}
+    </div>
+  );
+}
+
+// Result of POST /api/admin/bots/verify — the real bot info from LINE (or a failure reason).
+type VerifyResp = {
+  verified?: boolean;
+  matches?: boolean;
+  mock?: boolean;
+  reason?: string;
+  storedChannelId?: string;
+  info?: { userId?: string | null; basicId?: string | null; displayName?: string | null };
+};
+
+// Renders the LINE verification result: connected+match (green), token-ok-but-mismatch (amber
+// with the REAL Bot User ID to copy), or a failure (red with a human reason).
+function VerifyResult({ r }: { r: VerifyResp }) {
+  const ok = Boolean(r.verified && r.matches);
+  const mismatch = Boolean(r.verified && !r.matches);
+  const reasonText: Record<string, string> = {
+    invalid_access_token: "Access Token ผิดหรือหมดอายุ — กด ✏️ แก้ไข ใส่ token ใหม่",
+    line_unreachable: "ต่อ LINE ไม่ได้ ลองใหม่อีกครั้ง",
+    decrypt_failed: "ถอดรหัส token ไม่ได้ (ENCRYPTION_KEY ไม่ตรงกับตอนบันทึก)",
+  };
+  const bd = ok ? COLORS.green : mismatch ? COLORS.gold : COLORS.danger;
+  const bg = ok ? "var(--success-weak)" : mismatch ? "rgba(234,179,8,.12)" : "var(--danger-weak)";
+  return (
+    <div style={{ marginTop: 8, padding: "8px 11px", borderRadius: 8, background: bg, border: `1px solid ${bd}`, fontSize: 12.5, lineHeight: 1.5 }}>
+      {ok && (
+        <span style={{ color: COLORS.green }}>
+          ✅ เชื่อมถูกต้อง · <b>{r.info?.displayName || "บอท"}</b>
+          {r.info?.basicId ? ` (${r.info.basicId})` : ""} · Bot User ID ตรงกับของจริง{r.mock ? " · (mock)" : ""}
+        </span>
+      )}
+      {mismatch && (
+        <span style={{ color: COLORS.gold }}>
+          ⚠ Token ใช้ได้ แต่ Bot User ID ที่เก็บ<b>ไม่ตรง</b> — ของจริงคือ{" "}
+          <code style={{ wordBreak: "break-all", color: COLORS.textMain }}>{r.info?.userId}</code> · กด ✏️ แก้ไข ให้ตรง
+        </span>
+      )}
+      {!r.verified && <span style={{ color: COLORS.danger }}>❌ {reasonText[r.reason || ""] || r.reason || "ตรวจไม่สำเร็จ"}</span>}
+    </div>
+  );
+}
+
 // One connected LINE OA row: shows the Bot User ID (copyable) + reply mode + status, and an
 // in-place edit form (fix the Bot User ID, switch reply mode, or re-enter secret/token).
 type AdminFetch = (path: string, init?: RequestInit) => Promise<any>;
@@ -387,6 +588,8 @@ function BotRow({ bot, adminFetch, onSaved }: { bot: Bot; adminFetch: AdminFetch
   const [copied, setCopied] = useState(false);
   const [detecting, setDetecting] = useState(false);
   const [detected, setDetected] = useState<DetectedDest[] | null>(null);
+  const [verifying, setVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<VerifyResp | null>(null);
 
   const copyId = async () => {
     try {
@@ -408,6 +611,20 @@ function BotRow({ bot, adminFetch, onSaved }: { bot: Bot; adminFetch: AdminFetch
       setErr(e instanceof Error ? e.message : "ดึงข้อมูลไม่สำเร็จ");
     } finally {
       setDetecting(false);
+    }
+  };
+
+  // Actually verify against LINE: calls /v2/bot/info with the stored token → real Bot User ID + name.
+  const verify = async () => {
+    setVerifying(true);
+    setVerifyResult(null);
+    try {
+      const j = await adminFetch("/api/admin/bots/verify", { method: "POST", body: JSON.stringify({ id: bot.id }) });
+      setVerifyResult(j as VerifyResp);
+    } catch (e) {
+      setVerifyResult({ verified: false, reason: e instanceof Error ? e.message : "ตรวจไม่สำเร็จ" });
+    } finally {
+      setVerifying(false);
     }
   };
 
@@ -444,37 +661,35 @@ function BotRow({ bot, adminFetch, onSaved }: { bot: Bot; adminFetch: AdminFetch
 
   if (!editing) {
     return (
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 10,
-          flexWrap: "wrap",
-          padding: "8px 0",
-          borderBottom: `1px solid ${COLORS.border}`,
-        }}
-      >
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 11, color: COLORS.textMuted }}>Bot User ID</div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <code style={{ color: COLORS.blue, wordBreak: "break-all", fontSize: 13 }}>{bot.line_channel_id}</code>
-            <button
-              type="button"
-              onClick={copyId}
-              style={{ border: "none", background: "transparent", color: COLORS.textMuted, cursor: "pointer", fontSize: 12 }}
-            >
-              {copied ? "✓ คัดลอกแล้ว" : "📋 คัดลอก"}
-            </button>
+      <div style={{ padding: "8px 0", borderBottom: `1px solid ${COLORS.border}` }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 11, color: COLORS.textMuted }}>Bot User ID</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <code style={{ color: COLORS.blue, wordBreak: "break-all", fontSize: 13 }}>{bot.line_channel_id}</code>
+              <button
+                type="button"
+                onClick={copyId}
+                style={{ border: "none", background: "transparent", color: COLORS.textMuted, cursor: "pointer", fontSize: 12 }}
+              >
+                {copied ? "✓ คัดลอกแล้ว" : "📋 คัดลอก"}
+              </button>
+            </div>
+            <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 2 }}>
+              โหมด: {REPLY_MODES.find((m) => m.key === bot.group_reply_mode)?.label ?? bot.group_reply_mode} ·{" "}
+              <span style={{ color: bot.active ? COLORS.green : COLORS.danger }}>{bot.active ? "● active" : "○ inactive"}</span>
+            </div>
           </div>
-          <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 2 }}>
-            โหมด: {REPLY_MODES.find((m) => m.key === bot.group_reply_mode)?.label ?? bot.group_reply_mode} ·{" "}
-            <span style={{ color: bot.active ? COLORS.green : COLORS.danger }}>{bot.active ? "● active" : "○ inactive"}</span>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <Button variant="ghost" onClick={verify} disabled={verifying}>
+              {verifying ? "กำลังตรวจ…" : "🔍 ตรวจกับ LINE"}
+            </Button>
+            <Button variant="ghost" onClick={() => setEditing(true)}>
+              ✏️ แก้ไข
+            </Button>
           </div>
         </div>
-        <Button variant="ghost" onClick={() => setEditing(true)}>
-          ✏️ แก้ไข
-        </Button>
+        {verifyResult && <VerifyResult r={verifyResult} />}
       </div>
     );
   }
