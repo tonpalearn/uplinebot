@@ -25,14 +25,33 @@ const GEMINI_TIMEOUT_MS = 9_000;
 
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
 
-/** อ่านคีย์จาก env — รองรับหลายชื่อที่นิยมใช้กัน (ตั้งชื่อไหนใน Vercel ก็ติด) */
+/**
+ * ชื่อ env ที่ยอมรับ เรียงตามลำดับความสำคัญ — ตั้งชื่อไหนใน Vercel ก็ติด.
+ * มีหลายชื่อเพราะไฟล์คีย์ในเครื่องแต่ละที่ตั้งชื่อไม่เหมือนกัน (`GEMINI_KEY`, `GOOGLE_API_KEY`, …)
+ * แล้วเวลาก๊อปค่าไปใส่ Vercel คนมักติดชื่อเดิมมาด้วย — รองรับไว้เลยดีกว่าให้ไปนั่งงงว่าทำไมไม่ติด.
+ */
+const KEY_ENV_NAMES = [
+  "GEMINI_API_KEY",
+  "GEMINI_KEY",
+  "GOOGLE_GENERATIVE_AI_API_KEY",
+  "GOOGLE_API_KEY",
+] as const;
+
+/** ชื่อ env ที่เจอคีย์อยู่จริง (ไว้ให้ /api/health รายงาน — ชื่อตัวแปรไม่ใช่ความลับ ค่าต่างหากที่เป็น) */
+export function geminiKeySource(): string | null {
+  for (const name of KEY_ENV_NAMES) {
+    if ((process.env[name] ?? "").trim()) return name;
+  }
+  return null;
+}
+
+/** อ่านคีย์จาก env */
 export function geminiApiKey(): string | null {
-  const key =
-    process.env.GEMINI_API_KEY ||
-    process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
-    process.env.GOOGLE_API_KEY ||
-    "";
-  return key.trim() ? key.trim() : null;
+  for (const name of KEY_ENV_NAMES) {
+    const v = (process.env[name] ?? "").trim();
+    if (v) return v;
+  }
+  return null;
 }
 
 /** เปิดใช้ AI ได้ไหม (มีคีย์หรือเปล่า) — ให้ผู้เรียกเช็คก่อนเพื่อข้ามงานที่ไม่จำเป็น */
