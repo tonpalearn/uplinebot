@@ -63,6 +63,12 @@ export type MealIntent =
   | { action: "day_detail"; occurredOn: string }
   /** ขอลิงก์หน้าเว็บจัดการอาหาร */
   | { action: "link" }
+  /** ตั้งเป้าหมายต่อวัน — goal เป็นกรัมเสมอ (แปลงจาก % ให้แล้วถ้าผู้ใช้พิมพ์เป็น %) */
+  | { action: "set_goal"; kcal: number; carbG: number; proteinG: number; fatG: number }
+  /** ดูเป้าหมาย + ความคืบหน้าของวันนั้น */
+  | { action: "show_goal"; occurredOn: string }
+  /** ลบเป้าหมาย */
+  | { action: "clear_goal" }
   | { action: "help" }
   | null;
 
@@ -451,6 +457,87 @@ function parseFoodLines(text: string): ParsedFoodLine[] {
   return out;
 }
 
+/**
+ * อ่านสเปกเป้าหมาย: "1800" · "1800 C40 P30 F30" · "C180 P135 F60" · "1800 50:20:30"
+ *
+ * กติกาแยก "%" ออกจาก "กรัม" โดยไม่ต้องให้ผู้ใช้ใส่เครื่องหมาย:
+ *   • มีเลขแคลอรี่นำหน้า + มี C/P/F → ถือว่า C/P/F เป็น **%** (คนตั้งเป้าแบบนี้คิดเป็นสัดส่วน)
+ *   • ไม่มีเลขแคลอรี่ + มี C/P/F   → ถือว่าเป็น **กรัม** (คนคุมโปรตีนเป็นกรัมโดยตรง)
+ *   • มีแต่เลขแคลอรี่               → ใช้สัดส่วนเริ่มต้น 50:20:30
+ * ทางเลือกนี้อ่านง่ายกว่าให้จำสัญลักษณ์ และไม่มีเคสกำกวมจริง ๆ ในทางปฏิบัติ
+ * (ไม่มีใครตั้งเป้าคาร์บ 40 กรัมพร้อมกับบอกแคลอรี่รวมมาด้วย แล้วหวังให้ตีเป็นกรัม)
+ */
+function parseGoalSpec(body: string): Extract<MealIntent, { action: "set_goal" }> | null {
+  const spec = body.trim();
+  if (!spec) return null;
+
+  const pick = (re: RegExp): number | null => {
+    const m = spec.match(re);
+    if (!m) return null;
+    const v = parseFloat(m[1]);
+    return Number.isFinite(v) && v >= 0 ? v : null;
+  };
+
+  let carb = pick(/(?:คาร์บ|คาโบ|carbs?|c)\s*[:=]?\s*(\d+(?:\.\d+)?)/i);
+  let protein = pick(/(?:โปรตีน|protein|p)\s*[:=]?\s*(\d+(?:\.\d+)?)/i);
+  let fat = pick(/(?:ไขมัน|fats?|f)\s*[:=]?\s*(\d+(?:\.\d+)?)/i);
+
+  // รูปย่อ "50:20:30" (เรียง C:P:F เสมอ)
+  const ratio = spec.match(/(\d{1,3})\s*[:/]\s*(\d{1,3})\s*[:/]\s*(\d{1,3})/);
+  if (ratio && carb === null && protein === null && fat === null) {
+    carb = parseFloat(ratio[1]);
+    protein = parseFloat(ratio[2]);
+    fat = parseFloat(ratio[3]);
+  }
+
+  // เลขแคลอรี่ = ตัวเลขที่ "ไม่ได้ติดกับตัวอักษร C/P/F และไม่ได้อยู่ในรูปสัดส่วน"
+  let kcalText = spec;
+  if (ratio) kcalText = kcalText.replace(ratio[0], " ");
+  kcalText = kcalText
+    .replace(/(?:คาร์บ|คาโบ|carbs?|c)\s*[:=]?\s*\d+(?:\.\d+)?/gi, " ")
+    .replace(/(?:โปรตีน|protein|p)\s*[:=]?\s*\d+(?:\.\d+)?/gi, " ")
+    .replace(/(?:ไขมัน|fats?|f)\s*[:=]?\s*\d+(?:\.\d+)?/gi, " ");
+  const kcalMatch = kcalText.match(/(\d{3,5}(?:\.\d+)?)/);
+  const kcal = kcalMatch ? parseFloat(kcalMatch[1]) : null;
+
+  const hasMacros = carb !== null || protein !== null || fat !== null;
+
+  if (kcal !== null && kcal > 0) {
+    if (!hasMacros) {
+      return { action: "set_goal", kcal, ...pctToGrams(kcal, 50, 20, 30) };
+    }
+    return { action: "set_goal", kcal, ...pctToGrams(kcal, carb ?? 0, protein ?? 0, fat ?? 0) };
+  }
+
+  if (hasMacros) {
+    const c = carb ?? 0;
+    const p = protein ?? 0;
+    const f = fat ?? 0;
+    const total = c * 4 + p * 4 + f * 9;
+    if (total <= 0) return null;
+    return { action: "set_goal", kcal: Math.round(total), carbG: c, proteinG: p, fatG: f };
+  }
+
+  return null;
+}
+
+/** กระจายแคลอรี่ตามสัดส่วน % → กรัม (ปรับให้ % รวมเป็น 100 ก่อนเสมอ) */
+function pctToGrams(
+  kcal: number,
+  cPct: number,
+  pPct: number,
+  fPct: number
+): { carbG: number; proteinG: number; fatG: number } {
+  const sum = cPct + pPct + fPct;
+  const n = sum > 0 ? 100 / sum : 0;
+  const r1 = (v: number) => Math.round(v * 10) / 10;
+  return {
+    carbG: r1((kcal * cPct * n) / 100 / 4),
+    proteinG: r1((kcal * pPct * n) / 100 / 4),
+    fatG: r1((kcal * fPct * n) / 100 / 9),
+  };
+}
+
 // ── คำสั่ง ─────────────────────────────────────────────────────────────────────
 /** "กิน …" — ต้องมี "กิน" นำหน้าเสมอ (กันข้อความคุยเล่นในกลุ่มถูกจดเป็นอาหาร) */
 const CMD_EAT = /^(?:กิน|ทาน|มื้อ|eat)(?:\s+([\s\S]*))?$/i;
@@ -470,6 +557,12 @@ const CMD_RESTORE = /^(?:กู้กิน|เลิกลบกิน|ยก�
 const CMD_DETAIL = /^(?:รายละเอียดกิน|รายการกิน|กินอะไรบ้าง|กินอะไรไปบ้าง|ดูรายการกิน|รายละเอียดมื้อ)(?:\s+(.*))?$/i;
 /** "ทั้งวัน"/"วันนี้"/"หมด" ในบริบทคำสั่งลบ = ลบทุกรายการของวันนั้น */
 const DELETE_ALL_RE = /^(?:ทั้งวัน|ทั้งหมด|หมด|วันนี้|all)$/i;
+/** ตั้งเป้า: "เป้ากิน 1800" · "เป้ากิน 1800 C40 P30 F30" · "เป้ากิน C180 P135 F60" */
+const CMD_GOAL_SET = /^(?:เป้ากิน|ตั้งเป้ากิน|เป้าหมายกิน|เป้าแคล|ตั้งเป้า)\s+(.+)$/i;
+/** ดูเป้า + ความคืบหน้า */
+const CMD_GOAL_SHOW = /^(?:ดูเป้า|เป้ากิน|เป้าหมาย|เป้า|เหลือกินได้|quota)(?:\s+(.*))?$/i;
+/** ลบเป้า */
+const CMD_GOAL_CLEAR = /^(?:ลบเป้า|ยกเลิกเป้า|เลิกเป้า|ปิดเป้า)(?:กิน)?$/i;
 /** ขอลิงก์หน้าเว็บจัดการอาหาร/ฐานอาหาร */
 const CMD_LINK = /^(?:จัดการอาหาร|แก้กิน|แก้ไขกิน|เว็บกิน|ลิงก์กิน|ลิงค์กิน|ฐานอาหาร|จัดการกิน)$/i;
 /** วิธีใช้ */
@@ -549,6 +642,21 @@ export function parseMealIntent(text: string, now: Date): MealIntent {
 
   if (CMD_HELP.test(firstLine)) return { action: "help" };
   if (CMD_LINK.test(firstLine)) return { action: "link" };
+  if (CMD_GOAL_CLEAR.test(firstLine)) return { action: "clear_goal" };
+
+  // ตั้งเป้า (มีอาร์กิวเมนต์) ต้องมาก่อน "ดูเป้า" ซึ่งรับได้ทั้งมีและไม่มีอาร์กิวเมนต์
+  const goalSetMatch = firstLine.match(CMD_GOAL_SET);
+  if (goalSetMatch) {
+    const parsed = parseGoalSpec(goalSetMatch[1]);
+    if (parsed) return parsed;
+    // อ่านสเปกไม่ออก แต่ถ้าเป็นคำที่สื่อว่าอยากดูเป้า ให้ตกไปทาง show_goal ข้างล่าง
+  }
+
+  const goalShowMatch = firstLine.match(CMD_GOAL_SHOW);
+  if (goalShowMatch) {
+    const { ymd } = extractDate(goalShowMatch[1] ?? "", today);
+    return { action: "show_goal", occurredOn: ymdKey(ymd) };
+  }
   // ต้องเช็ค UNDO (ไม่มีอาร์กิวเมนต์) ก่อน DELETE (มีอาร์กิวเมนต์) — สองตัวนี้ใช้คำนำหน้าเดียวกัน
   if (CMD_UNDO.test(firstLine)) return { action: "undo" };
 

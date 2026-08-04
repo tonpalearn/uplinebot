@@ -9,12 +9,16 @@ import {
   deleteMealsByIndex,
   deleteMealsByDay,
   restoreLastDelete,
+  getGoal,
+  setGoal,
+  clearGoal,
   findFood,
   getDayEntries,
   resolveLines,
   upsertTenantFood,
 } from "./store";
 import { aggregateDay, rowMacros } from "./summary";
+import { computeProgress } from "./goal";
 import { sumMacros } from "./macros";
 import {
   buildDayCard,
@@ -28,6 +32,10 @@ import {
   buildDeletedText,
   buildRestoredText,
   buildMealLinkText,
+  buildGoalCard,
+  buildGoalSetText,
+  buildNoGoalText,
+  buildGoalClearedText,
   mealQuickReply,
 } from "./flex";
 
@@ -123,6 +131,10 @@ export const MealTrackerModule: ModuleHandler = {
         const slotRows = dayRows.filter((r) => r.meal_slot === intent.slot);
         const slotTotal = sumMacros(slotRows.map(rowMacros));
 
+        // โควตาที่เหลือคิดจาก "ทั้งวัน" ไม่ใช่เฉพาะมื้อนี้ — คนอยากรู้ว่าวันนี้กินได้อีกเท่าไร
+        const goal = await getGoal(ctx.targetId, lineUserId);
+        const dayTotal = sumMacros(dayRows.map(rowMacros));
+
         return [
           buildMealCard({
             slot: intent.slot,
@@ -130,13 +142,41 @@ export const MealTrackerModule: ModuleHandler = {
             slotInferred: !intent.slotExplicit,
             slotTotal,
             rows: slotRows,
+            progress: goal ? computeProgress(goal, dayTotal) : null,
           }),
         ];
       }
 
       case "day_summary": {
         const rows = await getDayEntries(ctx.targetId, lineUserId, intent.occurredOn);
-        return [buildDayCard(aggregateDay(rows), intent.occurredOn)];
+        const summary = aggregateDay(rows);
+        const goal = await getGoal(ctx.targetId, lineUserId);
+        return [
+          buildDayCard(summary, intent.occurredOn, goal ? computeProgress(goal, summary.total) : null),
+        ];
+      }
+
+      case "set_goal": {
+        const goal = await setGoal(ctx.targetId, lineUserId, {
+          kcal: intent.kcal,
+          carbG: intent.carbG,
+          proteinG: intent.proteinG,
+          fatG: intent.fatG,
+        });
+        return [buildGoalSetText(goal)];
+      }
+
+      case "show_goal": {
+        const goal = await getGoal(ctx.targetId, lineUserId);
+        if (!goal) return [buildNoGoalText()];
+        const rows = await getDayEntries(ctx.targetId, lineUserId, intent.occurredOn);
+        const summary = aggregateDay(rows);
+        return [buildGoalCard(computeProgress(goal, summary.total), intent.occurredOn, summary.count)];
+      }
+
+      case "clear_goal": {
+        const had = await clearGoal(ctx.targetId, lineUserId);
+        return [buildGoalClearedText(had)];
       }
 
       case "teach": {

@@ -43,6 +43,20 @@ interface Summary {
   aiNames: string[];
 }
 
+interface MacroProgress {
+  eatenG: number; goalG: number; leftG: number;
+  eatenKcal: number; goalKcal: number; leftKcal: number;
+  pct: number; over: boolean;
+}
+
+interface Goal { kcal: number; carbG: number; proteinG: number; fatG: number }
+
+interface Progress {
+  goal: Goal;
+  kcal: MacroProgress; carb: MacroProgress; protein: MacroProgress; fat: MacroProgress;
+  macroKcalTotal: number;
+}
+
 interface Food {
   id: string;
   tenant_id: string | null;
@@ -65,7 +79,9 @@ const SLOTS: { key: MealSlot; label: string; emoji: string }[] = [
   { key: "snack", label: "ของว่าง", emoji: "🍪" },
 ];
 
-const MACRO = { carb: "#F59E0B", protein: "#0EA47F", fat: "#8B5CF6" };
+// ตรงกับ MACRO ใน lib/modules/flex-ui.ts — ผู้ใช้เห็นการ์ดในไลน์แล้วกดมาต่อที่เว็บ
+// ถ้าสีไม่ตรงกันจะอ่านผิดทันที (สีคือตัวบอกว่าแท่งไหนคือสารอาหารอะไร)
+const MACRO = { carb: "#F59E0B", protein: "#0EA5E9", fat: "#A855F7" };
 
 const THAI_MONTHS = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
 const THAI_DOW = ["อา.", "จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส."];
@@ -101,6 +117,8 @@ export default function MealPage({ params }: { params: { token: string } }) {
   const [date, setDate] = useState(bkkToday());
   const [entries, setEntries] = useState<Entry[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [progress, setProgress] = useState<Progress | null>(null);
+  const [goalOpen, setGoalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -111,10 +129,14 @@ export default function MealPage({ params }: { params: { token: string } }) {
     setTimeout(() => setToast(null), 3200);
   }, []);
 
-  const applyPayload = useCallback((d: { entries?: Entry[]; summary?: Summary }) => {
-    setEntries(d.entries ?? []);
-    setSummary(d.summary ?? null);
-  }, []);
+  const applyPayload = useCallback(
+    (d: { entries?: Entry[]; summary?: Summary; progress?: Progress | null }) => {
+      setEntries(d.entries ?? []);
+      setSummary(d.summary ?? null);
+      setProgress(d.progress ?? null);
+    },
+    []
+  );
 
   const load = useCallback(
     async (ymd: string) => {
@@ -227,6 +249,15 @@ export default function MealPage({ params }: { params: { token: string } }) {
               <div style={{ ...sx.empty, color: T.danger }}>{err}</div>
             ) : (
               <>
+                <GoalPanel
+                  token={token}
+                  progress={progress}
+                  open={goalOpen}
+                  setOpen={setGoalOpen}
+                  flash={flash}
+                  onSaved={() => void load(date)}
+                />
+
                 {summary && summary.count > 0 && <SummaryCard s={summary} />}
 
                 {bySlot.length === 0 ? (
@@ -282,6 +313,276 @@ export default function MealPage({ params }: { params: { token: string } }) {
         <footer style={sx.footer}>
           UP Line · บันทึกอาหาร — ตัวเลขเป็นค่าประมาณเพื่อดูแนวโน้ม ไม่ใช่คำแนะนำทางการแพทย์
         </footer>
+      </div>
+    </div>
+  );
+}
+
+// ── เป้าหมาย + โควตาที่เหลือ ────────────────────────────────────────────────────
+/**
+ * แผงเป้าหมาย: ยังไม่ตั้ง → ชวนตั้ง · ตั้งแล้ว → โชว์ "เหลือกินได้อีกเท่าไร" + แถบความคืบหน้า
+ * ทุกแถวบอก **ทั้งกรัมและ kcal** เพราะสองหน่วยนี้ใช้คนละจังหวะกัน: กรัมไว้ตัดสินใจตอนสั่งอาหาร
+ * kcal ไว้เทียบข้ามสารอาหาร
+ */
+function GoalPanel({
+  token, progress, open, setOpen, flash, onSaved,
+}: {
+  token: string;
+  progress: Progress | null;
+  open: boolean;
+  setOpen: (v: boolean) => void;
+  flash: (m: string) => void;
+  onSaved: () => void;
+}) {
+  if (!progress && !open) {
+    return (
+      <button style={sx.goalEmpty} onClick={() => setOpen(true)}>
+        🎯 ตั้งเป้าหมายแคลอรี่ต่อวัน — แล้วหน้านี้จะบอกว่าเหลือกินได้อีกเท่าไร
+      </button>
+    );
+  }
+
+  return (
+    <section style={sx.card}>
+      {progress && (
+        <>
+          <div style={sx.goalHead}>
+            <div>
+              <div style={sx.goalHeadLabel}>
+                {progress.kcal.leftKcal >= 0 ? "เหลือกินได้อีกวันนี้" : "เกินเป้าแล้ว"}
+              </div>
+              <div
+                style={{
+                  ...sx.goalHeadValue,
+                  color: progress.kcal.over ? T.danger : T.fgStrong,
+                }}
+              >
+                {kcal(Math.abs(progress.kcal.leftKcal))} <span style={sx.goalHeadUnit}>kcal</span>
+              </div>
+            </div>
+            <button style={sx.goalEditBtn} onClick={() => setOpen(!open)}>
+              {open ? "ปิด" : "แก้เป้า"}
+            </button>
+          </div>
+          <div style={sx.goalSub}>
+            กินไป {kcal(progress.kcal.eatenKcal)} / {kcal(progress.kcal.goalKcal)} kcal ·{" "}
+            {progress.kcal.pct}%
+          </div>
+
+          <GoalBar label="พลังงาน" color={T.accent} m={progress.kcal} unit="kcal" />
+          <GoalBar label="คาร์บ" color={MACRO.carb} m={progress.carb} unit="g" />
+          <GoalBar label="โปรตีน" color={MACRO.protein} m={progress.protein} unit="g" />
+          <GoalBar label="ไขมัน" color={MACRO.fat} m={progress.fat} unit="g" />
+
+          {Math.abs(progress.macroKcalTotal - progress.goal.kcal) / Math.max(1, progress.goal.kcal) > 0.05 && (
+            <div style={sx.warnNote}>
+              หมายเหตุ: สารอาหารที่ตั้งไว้รวมได้ {kcal(progress.macroKcalTotal)} kcal ต่างจากเป้าพลังงาน{" "}
+              {kcal(progress.goal.kcal)} kcal
+            </div>
+          )}
+        </>
+      )}
+
+      {open && (
+        <GoalForm
+          token={token}
+          current={progress?.goal ?? null}
+          flash={flash}
+          onDone={() => {
+            setOpen(false);
+            onSaved();
+          }}
+        />
+      )}
+    </section>
+  );
+}
+
+function GoalBar({
+  label, color, m, unit,
+}: {
+  label: string;
+  color: string;
+  m: MacroProgress;
+  unit: "g" | "kcal";
+}) {
+  const isK = unit === "kcal";
+  const eaten = isK ? kcal(m.eatenKcal) : g(m.eatenG);
+  const goal = isK ? kcal(m.goalKcal) : g(m.goalG);
+  const sub = isK
+    ? m.leftKcal >= 0 ? `เหลืออีก ${kcal(m.leftKcal)} kcal` : `เกินมา ${kcal(-m.leftKcal)} kcal`
+    : `${kcal(m.eatenKcal)}/${kcal(m.goalKcal)} kcal · ${
+        m.leftG >= 0 ? `เหลือ ${g(m.leftG)} g` : `เกิน ${g(-m.leftG)} g`
+      }`;
+
+  return (
+    <div style={sx.goalRow}>
+      <div style={sx.goalRowTop}>
+        <span style={sx.goalRowLabel}>{label}</span>
+        <span style={{ ...sx.goalRowVal, color: m.over ? T.danger : T.fgStrong }}>
+          {eaten} / {goal} {isK ? "kcal" : "g"}
+        </span>
+        <span style={{ ...sx.goalRowPct, color: m.over ? T.danger : T.muted }}>{m.pct}%</span>
+      </div>
+      <div style={sx.goalTrack}>
+        <div
+          style={{
+            ...sx.goalFill,
+            width: `${Math.max(0, Math.min(100, m.pct))}%`,
+            background: m.over ? T.danger : color,
+          }}
+        />
+      </div>
+      <div style={sx.goalRowSub}>{sub}</div>
+    </div>
+  );
+}
+
+function GoalForm({
+  token, current, flash, onDone,
+}: {
+  token: string;
+  current: Goal | null;
+  flash: (m: string) => void;
+  onDone: () => void;
+}) {
+  const [mode, setMode] = useState<"percent" | "grams">("percent");
+  const [kcalV, setKcalV] = useState(current ? String(Math.round(current.kcal)) : "1800");
+  const [c, setC] = useState("50");
+  const [pr, setPr] = useState("20");
+  const [f, setF] = useState("30");
+  const [cg, setCg] = useState(current ? String(current.carbG) : "");
+  const [pg, setPg] = useState(current ? String(current.proteinG) : "");
+  const [fg, setFg] = useState(current ? String(current.fatG) : "");
+  const [busy, setBusy] = useState(false);
+
+  const pctSum = Number(c || 0) + Number(pr || 0) + Number(f || 0);
+  // ดูตัวอย่างผลลัพธ์ก่อนบันทึก — คนตั้งเป้าเป็น % มักไม่รู้ว่าแปลงเป็นกี่กรัม
+  const preview =
+    mode === "percent" && Number(kcalV) > 0 && pctSum > 0
+      ? {
+          carbG: Math.round(((Number(kcalV) * Number(c || 0)) / pctSum / 4) * 10) / 10,
+          proteinG: Math.round(((Number(kcalV) * Number(pr || 0)) / pctSum / 4) * 10) / 10,
+          fatG: Math.round(((Number(kcalV) * Number(f || 0)) / pctSum / 9) * 10) / 10,
+        }
+      : null;
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const body =
+        mode === "percent"
+          ? { mode, kcal: Number(kcalV), carbPct: Number(c || 0), proteinPct: Number(pr || 0), fatPct: Number(f || 0) }
+          : { mode, carbG: Number(cg || 0), proteinG: Number(pg || 0), fatG: Number(fg || 0) };
+      const res = await fetch(`/api/meal/${token}/goal`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const d = await res.json();
+      if (!res.ok || !d.ok) throw new Error(d.reason ?? `HTTP ${res.status}`);
+      flash(`🎯 ตั้งเป้า ${kcal(d.goal.kcal)} kcal/วัน แล้ว`);
+      onDone();
+    } catch (e) {
+      flash(`❌ ${e instanceof Error ? e.message : "บันทึกไม่สำเร็จ"}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/meal/${token}/goal`, { method: "DELETE" });
+      const d = await res.json();
+      if (!res.ok || !d.ok) throw new Error(d.reason ?? `HTTP ${res.status}`);
+      flash("ลบเป้าหมายแล้ว");
+      onDone();
+    } catch (e) {
+      flash(`❌ ${e instanceof Error ? e.message : "ลบไม่สำเร็จ"}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={sx.goalForm}>
+      <div style={sx.modeTabs}>
+        <button
+          style={{ ...sx.modeTab, ...(mode === "percent" ? sx.modeTabOn : null) }}
+          onClick={() => setMode("percent")}
+        >
+          แคลอรี่ + สัดส่วน %
+        </button>
+        <button
+          style={{ ...sx.modeTab, ...(mode === "grams" ? sx.modeTabOn : null) }}
+          onClick={() => setMode("grams")}
+        >
+          ระบุเป็นกรัม
+        </button>
+      </div>
+
+      {mode === "percent" ? (
+        <>
+          <label style={sx.field}>
+            <span style={sx.fieldLabel}>เป้าพลังงานต่อวัน (kcal)</span>
+            <input style={sx.input} type="number" inputMode="numeric" value={kcalV} onChange={(e) => setKcalV(e.target.value)} />
+          </label>
+          <div className="meal-fieldrow" style={sx.fieldRow}>
+            <label style={{ ...sx.field, flex: 1 }}>
+              <span style={sx.fieldLabel}>คาร์บ %</span>
+              <input style={sx.input} type="number" inputMode="numeric" value={c} onChange={(e) => setC(e.target.value)} />
+            </label>
+            <label style={{ ...sx.field, flex: 1 }}>
+              <span style={sx.fieldLabel}>โปรตีน %</span>
+              <input style={sx.input} type="number" inputMode="numeric" value={pr} onChange={(e) => setPr(e.target.value)} />
+            </label>
+            <label style={{ ...sx.field, flex: 1 }}>
+              <span style={sx.fieldLabel}>ไขมัน %</span>
+              <input style={sx.input} type="number" inputMode="numeric" value={f} onChange={(e) => setF(e.target.value)} />
+            </label>
+          </div>
+          {preview && (
+            <div style={sx.previewBox}>
+              จะได้ = คาร์บ {preview.carbG} g · โปรตีน {preview.proteinG} g · ไขมัน {preview.fatG} g
+              {pctSum !== 100 && ` (รวม ${pctSum}% — ระบบปรับให้เป็น 100% ให้เอง)`}
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="meal-fieldrow" style={sx.fieldRow}>
+          {([["คาร์บ (g)", cg, setCg], ["โปรตีน (g)", pg, setPg], ["ไขมัน (g)", fg, setFg]] as const).map(
+            ([lab, val, set]) => (
+              <label key={lab} style={{ ...sx.field, flex: 1 }}>
+                <span style={sx.fieldLabel}>{lab}</span>
+                <input
+                  style={sx.input}
+                  type="number"
+                  min="0"
+                  step="any"
+                  inputMode="decimal"
+                  value={val}
+                  onChange={(e) => set(e.target.value)}
+                />
+              </label>
+            )
+          )}
+        </div>
+      )}
+
+      <div style={sx.editActions}>
+        <button style={{ ...sx.saveBtn, opacity: busy ? 0.5 : 1 }} disabled={busy} onClick={() => void save()}>
+          {busy ? "กำลังบันทึก…" : "💾 บันทึกเป้า"}
+        </button>
+        {current && (
+          <button style={sx.delBtn} disabled={busy} onClick={() => void remove()}>
+            ลบเป้า
+          </button>
+        )}
+      </div>
+      <div style={sx.editHint}>
+        พลังงานคิดจากสารอาหารด้วยสูตรมาตรฐาน (คาร์บ·โปรตีน 4 · ไขมัน 9 kcal ต่อกรัม) —
+        ตั้งในไลน์ก็ได้: เป้ากิน 1800 C40 P30 F30
       </div>
     </div>
   );
@@ -1040,6 +1341,72 @@ const sx: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     flexShrink: 0,
     fontSize: 14,
+  },
+
+  goalEmpty: {
+    width: "100%",
+    padding: "16px 18px",
+    borderRadius: T.radiusLg,
+    border: `1px dashed ${T.borderStrong}`,
+    background: T.surface,
+    color: T.muted,
+    fontSize: 14.5,
+    lineHeight: 1.7,
+    cursor: "pointer",
+    textAlign: "left",
+  },
+  goalHead: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 },
+  goalHeadLabel: { fontSize: 13, color: T.muted, fontWeight: 600 },
+  goalHeadValue: { fontSize: 29, fontWeight: 800, letterSpacing: -0.5, lineHeight: 1.25 },
+  goalHeadUnit: { fontSize: 15, fontWeight: 600, color: T.muted },
+  goalEditBtn: {
+    border: `1px solid ${T.border}`,
+    background: T.surface2,
+    color: T.fg,
+    borderRadius: T.radiusPill,
+    padding: "6px 14px",
+    fontSize: 13.5,
+    cursor: "pointer",
+    flexShrink: 0,
+  },
+  goalSub: { fontSize: 13.5, color: T.muted, marginTop: 2, marginBottom: 4 },
+
+  goalRow: { marginTop: 13 },
+  goalRowTop: { display: "flex", alignItems: "baseline", gap: 8 },
+  goalRowLabel: { fontSize: 14, color: T.fg, flex: 1 },
+  goalRowVal: { fontSize: 14, fontWeight: 700 },
+  goalRowPct: { fontSize: 13, width: 44, textAlign: "right" },
+  goalTrack: { height: 7, background: T.surface2, borderRadius: 4, overflow: "hidden", marginTop: 5 },
+  goalFill: { height: "100%", borderRadius: 4 },
+  goalRowSub: { fontSize: 12.5, color: T.muted, marginTop: 4, lineHeight: 1.6 },
+
+  goalForm: {
+    marginTop: 15,
+    paddingTop: 15,
+    borderTop: `1px solid ${T.border}`,
+    display: "flex",
+    flexDirection: "column",
+    gap: 11,
+  },
+  modeTabs: { display: "flex", gap: 8 },
+  modeTab: {
+    flex: 1,
+    padding: "9px 12px",
+    borderRadius: T.radiusSm,
+    border: `1px solid ${T.border}`,
+    background: T.surface,
+    color: T.muted,
+    fontSize: 14,
+    cursor: "pointer",
+  },
+  modeTabOn: { background: T.accentWeak, color: T.accent, borderColor: T.accent, fontWeight: 700 },
+  previewBox: {
+    padding: "10px 12px",
+    borderRadius: T.radiusSm,
+    background: T.surface2,
+    color: T.fg,
+    fontSize: 13.5,
+    lineHeight: 1.7,
   },
 
   empty: {

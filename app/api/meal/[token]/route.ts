@@ -2,12 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { validateMealToken } from "@/lib/meal-token";
 import {
   getDayEntries,
+  getGoal,
   updateMealEntry,
   deleteMealsByIndex,
   restoreLastDelete,
   type MealEntryRow,
 } from "@/lib/modules/meal-tracker/store";
 import { aggregateDay } from "@/lib/modules/meal-tracker/summary";
+import { computeProgress, type MealGoal } from "@/lib/modules/meal-tracker/goal";
 
 /**
  * API ของหน้าเว็บจัดการอาหาร `/meal/<token>`.
@@ -41,8 +43,20 @@ function bkkTodayKey(): string {
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-function payload(rows: MealEntryRow[], occurredOn: string) {
-  return { ok: true, occurredOn, entries: rows, summary: aggregateDay(rows) };
+/**
+ * ใส่ความคืบหน้าเทียบเป้ามาใน payload เดียวกับรายการเลย — หน้าเว็บจะได้ไม่ต้องยิงซ้ำหลังทุก
+ * การแก้/ลบ (ทุก mutation คืน payload ชุดนี้ ยอดคงเหลือจึงอัปเดตตามทันทีโดยอัตโนมัติ)
+ */
+function payload(rows: MealEntryRow[], occurredOn: string, goal: MealGoal | null) {
+  const summary = aggregateDay(rows);
+  return {
+    ok: true,
+    occurredOn,
+    entries: rows,
+    summary,
+    goal,
+    progress: goal ? computeProgress(goal, summary.total) : null,
+  };
 }
 
 export async function GET(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
@@ -53,8 +67,11 @@ export async function GET(req: NextRequest, ctx: RouteCtx): Promise<NextResponse
   const occurredOn = raw && DATE_RE.test(raw) ? raw : bkkTodayKey();
 
   try {
-    const rows = await getDayEntries(auth.targetId, auth.lineUserId, occurredOn);
-    return NextResponse.json(payload(rows, occurredOn));
+    const [rows, goal] = await Promise.all([
+      getDayEntries(auth.targetId, auth.lineUserId, occurredOn),
+      getGoal(auth.targetId, auth.lineUserId),
+    ]);
+    return NextResponse.json(payload(rows, occurredOn, goal));
   } catch (err) {
     return NextResponse.json(
       { ok: false, reason: err instanceof Error ? err.message : "read_failed" },
@@ -100,8 +117,11 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx): Promise<NextRespon
     if (!row) return NextResponse.json({ ok: false, reason: "not_found" }, { status: 404 });
 
     // คืนทั้งวันกลับไปด้วย เพื่อให้หน้าเว็บอัปเดตยอดรวม/สัดส่วนได้โดยไม่ต้องยิงซ้ำ
-    const rows = await getDayEntries(auth.targetId, auth.lineUserId, row.occurred_on);
-    return NextResponse.json({ ...payload(rows, row.occurred_on), entry: row });
+    const [rows, goal] = await Promise.all([
+      getDayEntries(auth.targetId, auth.lineUserId, row.occurred_on),
+      getGoal(auth.targetId, auth.lineUserId),
+    ]);
+    return NextResponse.json({ ...payload(rows, row.occurred_on, goal), entry: row });
   } catch (err) {
     return NextResponse.json(
       { ok: false, reason: err instanceof Error ? err.message : "update_failed" },
@@ -135,8 +155,11 @@ export async function DELETE(req: NextRequest, ctx: RouteCtx): Promise<NextRespo
     if (idx === -1) return NextResponse.json({ ok: false, reason: "not_found" }, { status: 404 });
 
     await deleteMealsByIndex(auth.targetId, auth.lineUserId, occurredOn, [idx + 1]);
-    const after = await getDayEntries(auth.targetId, auth.lineUserId, occurredOn);
-    return NextResponse.json(payload(after, occurredOn));
+    const [after, goal] = await Promise.all([
+      getDayEntries(auth.targetId, auth.lineUserId, occurredOn),
+      getGoal(auth.targetId, auth.lineUserId),
+    ]);
+    return NextResponse.json(payload(after, occurredOn, goal));
   } catch (err) {
     return NextResponse.json(
       { ok: false, reason: err instanceof Error ? err.message : "delete_failed" },
@@ -163,8 +186,11 @@ export async function POST(req: NextRequest, ctx: RouteCtx): Promise<NextRespons
   try {
     const restored = await restoreLastDelete(auth.targetId, auth.lineUserId);
     const occurredOn = restored[0]?.occurred_on ?? bkkTodayKey();
-    const rows = await getDayEntries(auth.targetId, auth.lineUserId, occurredOn);
-    return NextResponse.json({ ...payload(rows, occurredOn), restored: restored.length });
+    const [rows, goal] = await Promise.all([
+      getDayEntries(auth.targetId, auth.lineUserId, occurredOn),
+      getGoal(auth.targetId, auth.lineUserId),
+    ]);
+    return NextResponse.json({ ...payload(rows, occurredOn, goal), restored: restored.length });
   } catch (err) {
     return NextResponse.json(
       { ok: false, reason: err instanceof Error ? err.message : "restore_failed" },

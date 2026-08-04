@@ -1,6 +1,7 @@
 import { getServiceClient } from "../../db";
 import type { FoodBasis, MealSlot, ParsedFoodLine } from "./parse";
 import { computeLineMacros, type FoodRef, type Macros } from "./macros";
+import type { MealGoal } from "./goal";
 import { estimateFoodMacros } from "./ai-food";
 import { isGeminiEnabled } from "../../ai/gemini";
 
@@ -389,6 +390,69 @@ export async function restoreLastDelete(
 
   if (upErr) throw new Error(`Failed to restore meal entries: ${upErr.message}`);
   return batch;
+}
+
+/**
+ * อ่านเป้าหมายของ (แชท × คน) — null = ยังไม่ตั้งเป้า (การ์ดจะไม่โชว์แถบความคืบหน้า).
+ * line_user_id ใช้สตริงว่างแทน null เพราะเป็นส่วนหนึ่งของ primary key (NULL ใน PK ไม่ได้).
+ */
+export async function getGoal(targetId: string, lineUserId: string | null): Promise<MealGoal | null> {
+  const supabase = getServiceClient();
+  const { data, error } = await supabase
+    .from("upl_meal_goals")
+    .select("kcal, carb_g, protein_g, fat_g")
+    .eq("target_id", targetId)
+    .eq("line_user_id", lineUserId ?? "")
+    .maybeSingle();
+
+  if (error) throw new Error(`Failed to read meal goal for target ${targetId}: ${error.message}`);
+  if (!data) return null;
+
+  return {
+    kcal: Number(data.kcal),
+    carbG: Number(data.carb_g),
+    proteinG: Number(data.protein_g),
+    fatG: Number(data.fat_g),
+  };
+}
+
+/** ตั้ง/แก้เป้าหมาย (upsert ตาม primary key) */
+export async function setGoal(
+  targetId: string,
+  lineUserId: string | null,
+  goal: MealGoal
+): Promise<MealGoal> {
+  const supabase = getServiceClient();
+  const { error } = await supabase.from("upl_meal_goals").upsert(
+    {
+      target_id: targetId,
+      line_user_id: lineUserId ?? "",
+      kcal: goal.kcal,
+      carb_g: goal.carbG,
+      protein_g: goal.proteinG,
+      fat_g: goal.fatG,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "target_id,line_user_id" }
+  );
+
+  if (error) throw new Error(`Failed to save meal goal for target ${targetId}: ${error.message}`);
+  return goal;
+}
+
+/** ลบเป้าหมาย — คืน true ถ้ามีของให้ลบจริง */
+export async function clearGoal(targetId: string, lineUserId: string | null): Promise<boolean> {
+  const supabase = getServiceClient();
+  const { data, error } = await supabase
+    .from("upl_meal_goals")
+    .delete()
+    .eq("target_id", targetId)
+    .eq("line_user_id", lineUserId ?? "")
+    .select("target_id")
+    .maybeSingle();
+
+  if (error) throw new Error(`Failed to clear meal goal for target ${targetId}: ${error.message}`);
+  return data !== null;
 }
 
 export interface UpdateMealInput {

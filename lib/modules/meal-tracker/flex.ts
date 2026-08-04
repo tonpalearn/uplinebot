@@ -15,6 +15,7 @@ import {
 import { SLOT_EMOJI, SLOT_LABEL, type MealSlot } from "./parse";
 import { macroSplit, type MacroSplit, type Macros } from "./macros";
 import { formatThaiDate, rowMacros, type DaySummary } from "./summary";
+import { goalSplit, type GoalProgress, type MacroProgress, type MealGoal } from "./goal";
 import type { MealEntryRow } from "./store";
 import { macroChartUrl } from "./chart-url";
 
@@ -62,6 +63,7 @@ export function mealQuickReply(): { items: QuickReplyItem[] } {
     items: [
       { type: "action", action: { type: "message", label: "📊 สรุปวันนี้", text: "สรุปกิน" } },
       { type: "action", action: { type: "message", label: "🍽️ รายละเอียด", text: "รายละเอียดกิน" } },
+      { type: "action", action: { type: "message", label: "🎯 ดูเป้า", text: "ดูเป้า" } },
       { type: "action", action: { type: "message", label: "🌅 เช้า", text: "กิน เช้า " } },
       { type: "action", action: { type: "message", label: "☀️ กลางวัน", text: "กิน กลางวัน " } },
       { type: "action", action: { type: "message", label: "🌙 เย็น", text: "กิน เย็น " } },
@@ -157,6 +159,148 @@ function stackedBar(split: MacroSplit): Record<string, unknown> {
   };
 }
 
+// ── เป้าหมาย / ความคืบหน้า ────────────────────────────────────────────────────
+/** สีเมื่อเกินเป้า — ต้องต่างจากสีปกติชัด ๆ เพราะนี่คือข้อมูลที่ผู้ใช้ต้องเห็นทันที */
+const OVER_COLOR = "#DC2626";
+
+/** แถบความคืบหน้าหนึ่งเส้น (ตัดที่ 100% ไม่ให้ล้นกรอบ แต่ตัวเลข % ข้างบนยังบอกค่าจริง) */
+function progressBar(pct: number, color: string): Record<string, unknown> {
+  const w = Math.max(0, Math.min(100, pct));
+  return {
+    type: "box",
+    layout: "horizontal",
+    height: "7px",
+    cornerRadius: "4px",
+    backgroundColor: NEUTRAL.track,
+    margin: "xs",
+    contents:
+      w <= 0
+        ? [{ type: "filler" }]
+        : [
+            {
+              type: "box",
+              layout: "vertical",
+              width: `${w}%`,
+              height: "7px",
+              backgroundColor: color,
+              contents: [{ type: "filler" }],
+            },
+          ],
+  };
+}
+
+/**
+ * หนึ่งแถวของความคืบหน้า: ชื่อ · กินไปแล้ว/เป้า (กรัม + kcal) · % · แถบ · เหลืออีกเท่าไร
+ *
+ * แสดง **ทั้งกรัมและ kcal** ตามที่ต้องใช้จริง — กรัมคือหน่วยที่คนคุมอาหารใช้สั่งของ
+ * ส่วน kcal คือหน่วยที่เทียบข้ามสารอาหารได้ ถ้าโชว์อย่างเดียวจะต้องมานั่งคูณ 4/4/9 เอง
+ */
+function goalRow(
+  label: string,
+  color: string,
+  m: MacroProgress,
+  opts: { unit: "g" | "kcal" }
+): Record<string, unknown> {
+  const isKcal = opts.unit === "kcal";
+  const eaten = isKcal ? formatKcal(m.eatenKcal) : formatGrams(m.eatenG);
+  const goal = isKcal ? formatKcal(m.goalKcal) : formatGrams(m.goalG);
+  const unitText = isKcal ? "kcal" : "g";
+
+  // บรรทัดรอง: ฝั่งพลังงานไม่ต้องบอกซ้ำ ส่วนมาโครบอก kcal ควบกรัม
+  const sub = isKcal
+    ? m.leftKcal >= 0
+      ? `เหลืออีก ${formatKcal(m.leftKcal)} kcal`
+      : `เกินมา ${formatKcal(-m.leftKcal)} kcal`
+    : `${formatKcal(m.eatenKcal)}/${formatKcal(m.goalKcal)} kcal · ${
+        m.leftG >= 0 ? `เหลือ ${formatGrams(m.leftG)} g` : `เกิน ${formatGrams(-m.leftG)} g`
+      }`;
+
+  return {
+    type: "box",
+    layout: "vertical",
+    margin: "md",
+    contents: [
+      {
+        type: "box",
+        layout: "horizontal",
+        contents: [
+          { type: "text", text: label, size: FS.label, color: NEUTRAL.text, flex: 4 },
+          {
+            type: "text",
+            text: `${eaten} / ${goal} ${unitText}`,
+            size: FS.label,
+            color: m.over ? OVER_COLOR : NEUTRAL.text,
+            weight: "bold",
+            align: "end",
+            flex: 6,
+          },
+          {
+            type: "text",
+            text: `${m.pct}%`,
+            size: FS.meta,
+            color: m.over ? OVER_COLOR : NEUTRAL.muted,
+            align: "end",
+            flex: 3,
+          },
+        ],
+      },
+      progressBar(m.pct, m.over ? OVER_COLOR : color),
+      { type: "text", text: sub, size: FS.caption, color: NEUTRAL.muted, margin: "xs" },
+    ],
+  };
+}
+
+/** บล็อก "เป้าหมายวันนี้" ทั้งชุด — ใช้ทั้งบนการ์ดสรุปวันและการ์ดเป้าโดยตรง */
+export function goalProgressBlock(p: GoalProgress): Record<string, unknown>[] {
+  return [
+    softSep("lg"),
+    {
+      type: "text",
+      text: "🎯 เป้าหมายวันนี้",
+      size: FS.section,
+      weight: "bold",
+      color: NEUTRAL.text,
+      margin: "lg",
+    },
+    goalRow("พลังงาน", MEAL_ACCENT.solid, p.kcal, { unit: "kcal" }),
+    goalRow("คาร์บ", MACRO.carb, p.carb, { unit: "g" }),
+    goalRow("โปรตีน", MACRO.protein, p.protein, { unit: "g" }),
+    goalRow("ไขมัน", MACRO.fat, p.fat, { unit: "g" }),
+  ];
+}
+
+/** บรรทัดเดียวสั้น ๆ "เหลือวันนี้: …" — ใช้บนการ์ดมื้อที่พื้นที่จำกัด */
+function goalQuotaLine(p: GoalProgress): Record<string, unknown>[] {
+  const part = (label: string, m: MacroProgress) =>
+    m.leftG >= 0 ? `${label} ${formatGrams(m.leftG)}g` : `${label} เกิน ${formatGrams(-m.leftG)}g`;
+
+  const kcalText =
+    p.kcal.leftKcal >= 0
+      ? `เหลือ ${formatKcal(p.kcal.leftKcal)} kcal`
+      : `เกินเป้า ${formatKcal(-p.kcal.leftKcal)} kcal`;
+
+  return [
+    softSep("lg"),
+    {
+      type: "text",
+      text: `🎯 ${kcalText}  (${p.kcal.pct}% ของ ${formatKcal(p.kcal.goalKcal)})`,
+      size: FS.label,
+      weight: "bold",
+      color: p.kcal.over ? OVER_COLOR : NEUTRAL.text,
+      margin: "lg",
+      wrap: true,
+    },
+    {
+      type: "text",
+      text: `${part("C", p.carb)} · ${part("P", p.protein)} · ${part("F", p.fat)}`,
+      size: FS.meta,
+      color: NEUTRAL.muted,
+      margin: "xs",
+      wrap: true,
+    },
+  ];
+}
+
 /** ชื่ออาหารในชุดนี้ที่ตัวเลข "มาจาก AI ประเมิน" (ไม่ซ้ำ) */
 export function aiEstimatedNames(rows: MealEntryRow[]): string[] {
   return Array.from(new Set(rows.filter((r) => r.food_source === "ai-estimate").map((r) => r.food_name)));
@@ -206,6 +350,8 @@ export interface MealCardOpts {
   /** ยอดรวมของ "ทั้งมื้อนั้นในวันนั้น" (ไม่ใช่แค่ที่เพิ่งพิมพ์) */
   slotTotal: Macros;
   rows: MealEntryRow[];
+  /** ความคืบหน้าเทียบเป้า "ทั้งวัน" — undefined/null = ยังไม่ตั้งเป้า ไม่ต้องโชว์ */
+  progress?: GoalProgress | null;
 }
 
 /**
@@ -297,6 +443,7 @@ export function buildMealCard(opts: MealCardOpts): OutboundMessage {
       margin: "lg",
     },
     ...itemRows,
+    ...(opts.progress ? goalQuotaLine(opts.progress) : []),
     ...aiNotice(aiEstimatedNames(rows)),
     ...unknownNotice(unresolvedNames),
   ];
@@ -397,7 +544,11 @@ function slotRow(
  * การ์ดสรุปทั้งวัน: หัวส้ม (พลังงานรวม + สัดส่วน), โดนัทรวม, คำอธิบายสี, แล้วแยกตามมื้อ
  * พร้อมแถบสัดส่วนของแต่ละมื้อ. วันที่ไม่มีข้อมูล → คืนข้อความชวนบันทึกแทนการ์ดเปล่า.
  */
-export function buildDayCard(summary: DaySummary, occurredOn: string): OutboundMessage {
+export function buildDayCard(
+  summary: DaySummary,
+  occurredOn: string,
+  progress?: GoalProgress | null
+): OutboundMessage {
   if (summary.count === 0) {
     return {
       type: "text",
@@ -419,6 +570,7 @@ export function buildDayCard(summary: DaySummary, occurredOn: string): OutboundM
       margin: "lg",
     },
     ...summary.bySlot.map((s) => slotRow(s.slot, s.macros, s.split, s.count)),
+    ...(progress ? goalProgressBlock(progress) : []),
     ...aiNotice(summary.aiNames),
     ...unknownNotice(summary.unresolvedNames),
   ];
@@ -517,6 +669,12 @@ export function buildHelpText(): OutboundMessage {
       "• ปริมาณพิมพ์ได้ทั้ง 100g · 2 ขีด · 1 ทัพพี · 2 ฟอง · ครึ่งจาน",
       "• สรุปกิน = สรุปทั้งวัน (ใส่วันที่ต่อท้ายเพื่อดูย้อนหลัง)",
       "• รายละเอียดกิน = ดูว่าแต่ละมื้อกินอะไรไปบ้าง",
+      "",
+      "เป้าหมายต่อวัน:",
+      "• เป้ากิน 1800 = ตั้งเป้า (สัดส่วนมาตรฐาน C50 P20 F30)",
+      "• เป้ากิน 1800 C40 P30 F30 = ระบุสัดส่วนเป็น %",
+      "• เป้ากิน C180 P135 F60 = ระบุเป็นกรัม",
+      "• ดูเป้า = เหลือกินได้อีกเท่าไรวันนี้  ·  ลบเป้า = เลิกใช้",
       "• สอนอาหาร ข้าวมันไก่ = C78 P28 F22 ต่อจาน",
       "• อาหาร ข้าวสวย = ดูค่าสารอาหาร",
       "",
@@ -770,6 +928,134 @@ export function buildMealLinkText(url: string): OutboundMessage {
   return {
     type: "text",
     text: `🍽️ จัดการอาหารของคุณ:\n${url}\n\nในเว็บทำได้: แก้ปริมาณ/มื้อ/ชื่ออาหาร · ลบและกู้คืน · ดูฐานข้อมูลอาหารทั้งหมด · สั่งให้ AI เรียนรู้อาหารใหม่\n\n⚠️ ลิงก์นี้เปิดไดอารี่อาหารของคุณคนเดียว — อย่าส่งต่อให้ใคร`,
+    quickReply: mealQuickReply(),
+  };
+}
+
+/** การ์ด "เป้าหมาย + ความคืบหน้า" (ตอบคำสั่ง ดูเป้า) */
+export function buildGoalCard(
+  p: GoalProgress,
+  occurredOn: string,
+  count: number
+): OutboundMessage {
+  const split = goalSplit(p.goal);
+  const left = p.kcal.leftKcal;
+
+  const bubble: Record<string, unknown> = {
+    type: "bubble",
+    header: gradientHeader({
+      accent: MEAL_ACCENT,
+      eyebrow: `🎯 เป้าหมาย · ${formatThaiDate(occurredOn)}`,
+      heroLabel: left >= 0 ? "เหลือกินได้อีก" : "เกินเป้าแล้ว",
+      hero: `${formatKcal(Math.abs(left))} kcal`,
+      subtitle: `กินไป ${formatKcal(p.kcal.eatenKcal)} / ${formatKcal(
+        p.kcal.goalKcal
+      )} kcal (${p.kcal.pct}%)  ·  ${count} รายการ`,
+    }),
+    body: {
+      type: "box",
+      layout: "vertical",
+      paddingAll: "20px",
+      paddingTop: "12px",
+      spacing: "none",
+      contents: [
+        {
+          type: "text",
+          text: `เป้าวันละ ${formatKcal(p.goal.kcal)} kcal · สัดส่วน C ${split.carbPct}% · P ${
+            split.proteinPct
+          }% · F ${split.fatPct}%`,
+          size: FS.meta,
+          color: NEUTRAL.muted,
+          wrap: true,
+        },
+        // ตัด softSep + หัวข้อ "เป้าหมายวันนี้" ออก — หัวการ์ดบอกไปแล้ว ไม่ต้องพูดซ้ำ
+        ...goalProgressBlock(p).slice(2),
+        ...goalMismatchNote(p),
+      ],
+    },
+    footer: {
+      type: "box",
+      layout: "vertical",
+      paddingAll: "16px",
+      spacing: "sm",
+      contents: [messageButton("🍽️ ดูรายละเอียดวันนี้", "รายละเอียดกิน", MEAL_ACCENT.solid)],
+    },
+    styles: { header: headerStyle(MEAL_ACCENT), footer: footerStyle() },
+  };
+
+  return {
+    type: "flex",
+    altText: `เป้าหมาย ${formatThaiDate(occurredOn)} — ${
+      left >= 0 ? `เหลือ ${formatKcal(left)}` : `เกิน ${formatKcal(-left)}`
+    } kcal จาก ${formatKcal(p.goal.kcal)}`,
+    contents: bubble,
+    quickReply: mealQuickReply(),
+  };
+}
+
+/**
+ * เตือนเมื่อ "เป้ารวมของมาโคร" กับ "เป้าแคลอรี่ที่ตั้งไว้" ไม่ตรงกันเกิน 5%
+ * เกิดได้เมื่อผู้ใช้ตั้งกรัมเองแบบไม่พอดี — ไม่ใช่ความผิดพลาดร้ายแรง แต่ต้องบอก ไม่ใช่กลบ
+ */
+function goalMismatchNote(p: GoalProgress): Record<string, unknown>[] {
+  const diff = Math.abs(p.macroKcalTotal - p.goal.kcal);
+  if (p.goal.kcal <= 0 || diff / p.goal.kcal <= 0.05) return [];
+  return [
+    {
+      type: "text",
+      text: `หมายเหตุ: สารอาหารที่ตั้งไว้รวมได้ ${formatKcal(
+        p.macroKcalTotal
+      )} kcal ซึ่งต่างจากเป้าพลังงาน ${formatKcal(p.goal.kcal)} kcal — ปรับให้ตรงกันได้ด้วย\nเป้ากิน ${Math.round(
+        p.goal.kcal
+      )}`,
+      size: FS.caption,
+      color: "#B45309",
+      wrap: true,
+      margin: "lg",
+    },
+  ];
+}
+
+/** ยืนยันหลังตั้งเป้า */
+export function buildGoalSetText(goal: MealGoal): OutboundMessage {
+  const split = goalSplit(goal);
+  return {
+    type: "text",
+    text: [
+      `🎯 ตั้งเป้าแล้ว: ${formatKcal(goal.kcal)} kcal ต่อวัน`,
+      "",
+      `คาร์บ   ${formatGrams(goal.carbG)} g  (${formatKcal(goal.carbG * 4)} kcal · ${split.carbPct}%)`,
+      `โปรตีน  ${formatGrams(goal.proteinG)} g  (${formatKcal(goal.proteinG * 4)} kcal · ${split.proteinPct}%)`,
+      `ไขมัน   ${formatGrams(goal.fatG)} g  (${formatKcal(goal.fatG * 9)} kcal · ${split.fatPct}%)`,
+      "",
+      "พิมพ์ ดูเป้า เพื่อดูว่าวันนี้เหลือกินได้อีกเท่าไร",
+    ].join("\n"),
+    quickReply: mealQuickReply(),
+  };
+}
+
+/** ยังไม่ได้ตั้งเป้า — บอกวิธีตั้งให้ครบทุกแบบ */
+export function buildNoGoalText(): OutboundMessage {
+  return {
+    type: "text",
+    text: [
+      "ยังไม่ได้ตั้งเป้าหมายไว้",
+      "",
+      "ตั้งได้ 3 แบบ:",
+      "• เป้ากิน 1800            → ใช้สัดส่วนมาตรฐาน C50 P20 F30",
+      "• เป้ากิน 1800 C40 P30 F30 → ระบุสัดส่วนเป็น %",
+      "• เป้ากิน C180 P135 F60    → ระบุเป็นกรัมตรง ๆ (คิดแคลอรี่ให้เอง)",
+      "",
+      "ลบเป้าได้ด้วย  ลบเป้า",
+    ].join("\n"),
+    quickReply: mealQuickReply(),
+  };
+}
+
+export function buildGoalClearedText(had: boolean): OutboundMessage {
+  return {
+    type: "text",
+    text: had ? "🎯 ลบเป้าหมายแล้ว — การ์ดจะไม่แสดงความคืบหน้าอีก" : "ยังไม่ได้ตั้งเป้าหมายไว้",
     quickReply: mealQuickReply(),
   };
 }
