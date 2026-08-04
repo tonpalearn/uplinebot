@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { isGeminiEnabled, geminiModel, geminiKeySource } from "@/lib/ai/gemini";
 
 /**
@@ -16,20 +16,7 @@ import { isGeminiEnabled, geminiModel, geminiKeySource } from "@/lib/ai/gemini";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// ── ชั่วคราว: พิสูจน์ว่า Vercel ยิงถึง Gemini ได้จริง (ไม่ใช่แค่ "มีคีย์") — ถอดออกหลังตรวจเสร็จ
-let lastProbe = 0;
-
-export async function GET(req: NextRequest) {
-  if (req.nextUrl.searchParams.get("probe") === "gemini") {
-    const now = Date.now();
-    if (now - lastProbe < 60_000) return NextResponse.json({ probe: "cooldown" });
-    lastProbe = now;
-    const { estimateFoodMacros } = await import("@/lib/modules/meal-tracker/ai-food");
-    const t0 = Date.now();
-    const est = await estimateFoodMacros("ผัดกะเพราหมูสับไข่ดาว");
-    return NextResponse.json({ probe: "gemini", ms: Date.now() - t0, result: est });
-  }
-
+export async function GET() {
   return NextResponse.json({
     ok: true,
     ai: {
@@ -38,12 +25,6 @@ export async function GET(req: NextRequest) {
       /** ชื่อ env ที่เจอคีย์ (ไม่ใช่ค่า) — null = ยังไม่เจอชื่อไหนเลย ดู KEY_ENV_NAMES ว่ารับชื่ออะไรบ้าง */
       keySource: geminiKeySource(),
       model: geminiModel(),
-      /**
-       * ชื่อ env ที่ตั้งไว้จริงใน deployment นี้ซึ่งเกี่ยวกับ Gemini/Google — **ชื่ออย่างเดียว ไม่มีค่า**
-       * ไว้ตอบคำถามเดียว: "ใส่คีย์ไปแล้วแต่ระบบไม่เห็น เพราะตั้งชื่อผิดหรือใส่ผิดที่?"
-       * กรองแคบ ๆ แค่ 2 คำนี้ เพื่อไม่ให้เผยผังคอนฟิกส่วนอื่นของระบบ
-       */
-      googleEnvNames: Object.keys(process.env).filter((k) => /gemini|google/i.test(k)).sort(),
     },
     ts: new Date().toISOString(),
   });
