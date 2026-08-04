@@ -175,10 +175,7 @@ export default function MealPage({ params }: { params: { token: string } }) {
       <GlobalStyle />
       <div style={sx.shell}>
         <header className="meal-hero" style={sx.hero}>
-          <div style={sx.heroTop}>
-            <span style={sx.badge}>UP Line</span>
-            <ThemeToggle />
-          </div>
+          <span style={sx.badge}>UP Line</span>
           <h1 style={sx.h1}>🍽️ อาหารของฉัน</h1>
           <p style={sx.heroSub}>
             แก้รายการที่บันทึกไว้ · ดูฐานข้อมูลอาหาร · สั่งให้ AI เรียนรู้อาหารใหม่ —
@@ -775,29 +772,6 @@ function AddFoodForm({
   );
 }
 
-// ── ปุ่มสลับธีม ─────────────────────────────────────────────────────────────────
-function ThemeToggle() {
-  const [dark, setDark] = useState(false);
-
-  useEffect(() => {
-    const root = document.documentElement;
-    const stored = root.getAttribute("data-theme");
-    setDark(stored === "dark" || (!stored && window.matchMedia("(prefers-color-scheme: dark)").matches));
-  }, []);
-
-  const toggle = () => {
-    const next = !dark;
-    setDark(next);
-    document.documentElement.setAttribute("data-theme", next ? "dark" : "light");
-  };
-
-  return (
-    <button style={sx.themeBtn} onClick={toggle} title="สลับโหมดสว่าง/มืด">
-      {dark ? "☀️" : "🌙"}
-    </button>
-  );
-}
-
 // ── styles ──────────────────────────────────────────────────────────────────────
 function GlobalStyle() {
   return (
@@ -848,7 +822,6 @@ const sx: Record<string, React.CSSProperties> = {
     padding: "26px 24px",
     boxShadow: T.shadowMd,
   },
-  heroTop: { display: "flex", justifyContent: "space-between", alignItems: "center" },
   badge: {
     display: "inline-block",
     padding: "3px 11px",
@@ -858,16 +831,6 @@ const sx: Record<string, React.CSSProperties> = {
     fontSize: 12,
     fontWeight: 700,
     letterSpacing: 0.4,
-  },
-  themeBtn: {
-    border: `1px solid ${T.border}`,
-    background: T.surface,
-    color: T.fg,
-    borderRadius: T.radiusPill,
-    width: 36,
-    height: 36,
-    cursor: "pointer",
-    fontSize: 15,
   },
   h1: { margin: "14px 0 0", fontSize: 27, fontWeight: 800, color: T.fgStrong, letterSpacing: -0.3 },
   heroSub: { margin: "8px 0 0", color: T.muted, fontSize: 14.5, lineHeight: 1.75, maxWidth: 520 },

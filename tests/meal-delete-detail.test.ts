@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseMealIntent } from "../lib/modules/meal-tracker/parse";
+import { parseMealIntent, parseFoodLine } from "../lib/modules/meal-tracker/parse";
 import { buildDayDetailCard, buildDeletedText, buildRestoredText } from "../lib/modules/meal-tracker/flex";
 import type { MealEntryRow } from "../lib/modules/meal-tracker/store";
 
@@ -153,5 +153,53 @@ describe("buildDeletedText / buildRestoredText", () => {
 
   it("ไม่มีอะไรให้กู้ → บอกข้อจำกัด 24 ชม. ด้วย", () => {
     expect(buildRestoredText([]).text).toContain("24 ชม.");
+  });
+});
+
+// ── บั๊กที่เจอจากข้อมูลจริงของผู้ใช้ (4 ส.ค. 69) ─────────────────────────────────
+describe("parseMealIntent — บั๊กจากการใช้งานจริง", () => {
+  it("มื้ออยู่บรรทัดที่ 2 ต้องอ่านเป็นมื้อ ไม่ใช่ 'อาหารชื่อเช้า'", () => {
+    // ผู้ใช้พิมพ์ "กิน" แล้วขึ้นบรรทัดใหม่เป็นชื่อมื้อ — เดิม "เช้า" ถูกจดเป็นอาหาร (มาโคร 0)
+    // และมื้อถูกเดาจากเวลาเป็นมื้อเย็น ผิดทั้งคู่
+    const i = parseMealIntent("กิน\nเช้า\nข้าวสวย 100g", NOW) as {
+      action: string; slot: string; slotExplicit: boolean; items: { name: string }[];
+    };
+    expect(i.action).toBe("record");
+    expect(i.slot).toBe("breakfast");
+    expect(i.slotExplicit).toBe(true);
+    expect(i.items.map((x) => x.name)).toEqual(["ข้าวสวย"]);
+  });
+
+  it("บรรทัดที่ 2 ที่ 'มีชื่อมื้ออยู่ในชื่ออาหาร' ต้องไม่ถูกกินไปเป็นมื้อ", () => {
+    const i = parseMealIntent("กิน\nข้าวเช้า 1 จาน", NOW) as {
+      slotExplicit: boolean; items: { name: string; qty: number }[];
+    };
+    expect(i.slotExplicit).toBe(false); // เดาจากเวลา
+    expect(i.items).toEqual([expect.objectContaining({ name: "ข้าวเช้า", qty: 1 })]);
+  });
+
+  it("หน่วยนับที่ไม่อยู่ในรายการ ต้องยังแยกจำนวนออกจากชื่อได้", () => {
+    // "น่องใหญ่" ไม่ใช่หน่วยที่เรารู้จัก — เดิมทั้งบรรทัดกลายเป็นชื่อ "ไก่ทอด 1 น่องใหญ่"
+    // ซึ่งไม่มีวันจับคู่กับฐานได้เลย
+    const r = parseFoodLine("ไก่ทอด 1 น่องใหญ่");
+    expect(r).toMatchObject({ name: "ไก่ทอด", qty: 1, unit: "unit", unitLabel: "น่องใหญ่" });
+  });
+
+  it("คำขยายขนาดที่ติดกับหน่วย ต้องไม่หลงเหลือในชื่ออาหาร", () => {
+    expect(parseFoodLine("กาแฟ 1 ถ้วยใหญ่")).toMatchObject({ name: "กาแฟ", unitLabel: "ถ้วยใหญ่" });
+    expect(parseFoodLine("ข้าว 1 จานเล็ก")).toMatchObject({ name: "ข้าว", unitLabel: "จานเล็ก" });
+  });
+
+  it("ของเดิมต้องไม่พัง: หน่วยรู้จัก · น้ำหนัก · เศษส่วน", () => {
+    expect(parseFoodLine("ไข่ต้ม 2 ฟอง")).toMatchObject({ name: "ไข่ต้ม", qty: 2, unitLabel: "ฟอง" });
+    expect(parseFoodLine("ข้าวสวย 100g")).toMatchObject({ name: "ข้าวสวย", qty: 100, unit: "g" });
+    expect(parseFoodLine("ส้มตำ ครึ่งจาน")).toMatchObject({ name: "ส้มตำ", qty: 0.5 });
+    expect(parseFoodLine("นมสด 1 กล่อง 250ml")).toMatchObject({ name: "นมสด", qty: 250, unit: "g" });
+  });
+
+  it("ขอลิงก์หน้าเว็บ", () => {
+    for (const c of ["จัดการอาหาร", "แก้กิน", "ฐานอาหาร"]) {
+      expect(parseMealIntent(c, NOW)).toEqual({ action: "link" });
+    }
   });
 });

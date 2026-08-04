@@ -302,6 +302,14 @@ export function parseFoodLine(line: string): ParsedFoodLine | null {
   const numRe = /(\d+(?:[.,]\d+)?)\s*([^\s\d]*)/g;
   let match: RegExpExecArray | null;
   let chosen: { qty: number; unit: "g" | "unit"; unitLabel: string | null; start: number; end: number } | null = null;
+  /**
+   * ตัวสำรอง: "ตัวเลข + คำที่ไม่รู้จักว่าเป็นหน่วย" เช่น "ไก่ทอด 1 น่องใหญ่".
+   * รายการหน่วยนับของเรามีจำกัด ไม่มีวันครอบคลุมภาษาที่คนพิมพ์จริงได้หมด — เดิมพอจับหน่วยไม่ได้
+   * ทั้งบรรทัดจะกลายเป็น "ชื่ออาหาร" (รวมตัวเลข) แล้วจับคู่ฐานไม่ติดตลอดกาล.
+   * เก็บไว้ใช้ต่อเมื่อไม่มีตัวเลือกที่ดีกว่า: ถือเลขเป็นจำนวนหน่วยเสิร์ฟ และเก็บคำนั้นเป็นชื่อหน่วย
+   * (ไว้แสดงกลับ) — ชื่อที่เหลือจึงเป็น "ไก่ทอด" ซึ่งค้นฐานเจอ
+   */
+  let loose: { qty: number; unitLabel: string; start: number; end: number } | null = null;
 
   while ((match = numRe.exec(work)) !== null) {
     const qty = parseFloat(match[1].replace(",", "."));
@@ -327,17 +335,30 @@ export function parseFoodLine(line: string): ParsedFoodLine | null {
     if (hit) continue;
 
     // หน่วยนับชิ้น (อาจอยู่ติดเลข "2ฟอง" หรือเว้นวรรค "2 ฟอง")
-    const countRe = new RegExp(`^(${COUNT_UNIT_RE})`);
+    // คำขยายขนาดที่คนพิมพ์ติดหน่วยมาโดยไม่เว้นวรรค ("ถ้วยใหญ่", "ชิ้นเล็ก") — ต้องกลืนไปกับหน่วย
+    // ไม่งั้นเศษคำจะค้างอยู่ในชื่ออาหาร ("กาแฟ 1 ถ้วยใหญ่" → ชื่อ "กาแฟ ใหญ่") แล้วค้นฐานเพี้ยน.
+    // ใช้รายการคำที่กำหนดไว้แน่นอน ไม่กลืนทั้งคำ เพราะข้อความติดกันอย่าง "จานกับไข่" จะโดนกินไปด้วย
+    const countRe = new RegExp(`^(${COUNT_UNIT_RE})(?:ใหญ่|เล็ก|กลาง|จิ๋ว|ยักษ์|พิเศษ)?`);
     const cm = tail.match(countRe);
     if (cm) {
       chosen = {
         qty,
         unit: "unit",
-        unitLabel: cm[1],
+        unitLabel: cm[0],
         start: match.index,
         end: match.index + match[0].length - (tail.length - cm[0].length),
       };
       continue;
+    }
+
+    // tail เป็นคำไทย/อังกฤษที่เราไม่รู้จักว่าเป็นหน่วย → จำไว้เป็นตัวสำรอง (ดูตัวแปร loose)
+    if (qty > 0 && /^[ก-๙a-zA-Z]{1,14}$/.test(tail)) {
+      loose = {
+        qty,
+        unitLabel: tail,
+        start: match.index,
+        end: match.index + match[0].length,
+      };
     }
 
     // ตัวเลขเปล่า ๆ — อาจตามด้วยหน่วยที่เว้นวรรคไว้ (จับที่ tail ว่างแล้วดูคำถัดไป)
@@ -375,6 +396,10 @@ export function parseFoodLine(line: string): ParsedFoodLine | null {
       // เลขเปล่าไม่มีหน่วย → ถือเป็นจำนวนหน่วยเสิร์ฟ
       chosen = { qty, unit: "unit", unitLabel: null, start: match.index, end: match.index + match[1].length };
     }
+  }
+
+  if (!chosen && loose) {
+    chosen = { qty: loose.qty, unit: "unit", unitLabel: loose.unitLabel, start: loose.start, end: loose.end };
   }
 
   if (!chosen) {
@@ -568,13 +593,37 @@ export function parseMealIntent(text: string, now: Date): MealIntent {
   const { ymd, rest: afterDate } = extractDate(afterSlot, today);
 
   const inlineItems = afterDate.replace(/\s+/g, " ").trim();
-  const restLines = trimmed.split("\n").slice(1).join("\n");
-  const itemText = [inlineItems, restLines].filter((s) => s && s.trim()).join("\n");
+  let bodyLines = trimmed.split("\n").slice(1);
+
+  // ผู้ใช้จำนวนมากพิมพ์ "กิน" แล้วขึ้นบรรทัดใหม่เป็นชื่อมื้อ:
+  //     กิน
+  //     เช้า
+  //     ข้าวสวย 100g
+  // เดิมอ่านมื้อจากบรรทัดแรกอย่างเดียว "เช้า" จึงกลายเป็น "อาหารชื่อเช้า" (มาโคร 0) และมื้อถูก
+  // เดาจากเวลาแทน — ผิดทั้งคู่. ถ้าบรรทัดแรกไม่ได้ระบุมื้อไว้ และบรรทัดถัดมาเป็น "ชื่อมื้อล้วน ๆ"
+  // ให้ถือเป็นมื้อแล้วตัดออกจากรายการอาหาร
+  let slot = slotFromText;
+  let slotFromOwnLine = false;
+  if (!slot && !inlineItems) {
+    const idx = bodyLines.findIndex((l) => l.trim() !== "");
+    if (idx !== -1) {
+      const candidate = bodyLines[idx].trim();
+      const probe = extractSlot(candidate);
+      // ต้องเป็นชื่อมื้อล้วน ๆ เท่านั้น — "เช้า" ใช่, "ข้าวเช้า 1 จาน" ไม่ใช่ (จะกินรายการอาหารไป)
+      if (probe.slot && probe.rest.trim() === "") {
+        slot = probe.slot;
+        slotFromOwnLine = true;
+        bodyLines = bodyLines.filter((_, i) => i !== idx);
+      }
+    }
+  }
+
+  const itemText = [inlineItems, bodyLines.join("\n")].filter((s) => s && s.trim()).join("\n");
 
   return {
     action: "record",
-    slot: slotFromText ?? inferSlot(now),
-    slotExplicit: slotFromText !== null,
+    slot: slot ?? inferSlot(now),
+    slotExplicit: slotFromText !== null || slotFromOwnLine,
     occurredOn: ymdKey(ymd),
     items: parseFoodLines(itemText),
   };
