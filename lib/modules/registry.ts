@@ -2,6 +2,7 @@ import { AssistantModule } from "./assistant/handler";
 import { BroadcastModule } from "./broadcast/handler";
 import { SlipVerificationModule } from "./slip-verification/handler";
 import { ExpenseTrackerModule } from "./expense-tracker/handler";
+import { MealTrackerModule } from "./meal-tracker/handler";
 import { KnowledgeBaseModule } from "./knowledge-base/handler";
 import { isModuleEntitled } from "../entitlement";
 import type { LineEvent, ModuleHandler, OutboundMessage, TenantContext } from "./types";
@@ -20,6 +21,7 @@ export const MODULE_REGISTRY: Record<string, ModuleHandler> = {
   broadcast_campaigns: BroadcastModule,
   slip_verification: SlipVerificationModule,
   expense_tracker: ExpenseTrackerModule,
+  meal_tracker: MealTrackerModule,
   faq_rag_support: KnowledgeBaseModule,
   // ...remaining modules added as built, per SPEC.md §16 roadmap (P3/P4).
 };
@@ -35,6 +37,11 @@ const ROUTER_PRIORITY: string[] = [
   "slip_verification",
   // Broadcast trigger keywords (exact-match) get first shot at TEXT.
   "broadcast_campaigns",
+  // Meal Tracker owns a small, unambiguous keyword set (กิน / สรุปกิน / สอนอาหาร / อาหาร X / ลบกิน).
+  // It sits BEFORE Todo + Expense on purpose: "ลบกิน" would otherwise be shadowed by Todo's
+  // "ลบ …" delete command, and a food line like "ข้าวมันไก่ 1 จาน" must never be read as ฿1 by
+  // the ledger. Everything it doesn't recognize falls straight through untouched.
+  "meal_tracker",
   // Assistant (Todo) is checked BEFORE Expense Tracker so its explicit commands win — most
   // importantly "ลบ N" (delete todo #N), which the ledger parser would otherwise read as a
   // ฿N record. Todo only matches its own commands (เพิ่ม/ค้าง/ลบ N/เลื่อน/วางแผน/…); everything

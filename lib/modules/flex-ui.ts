@@ -86,6 +86,31 @@ export const KM_ACCENT: AccentTheme = {
   chipText: "#15803D",
 };
 
+/** MEAL / FOOD = ORANGE / amber — the บันทึกอาหาร (โภชนาการ) identity. Warm + appetizing, and
+ *  unmistakably NOT todo-red or money-green at a glance in a busy chat. */
+export const MEAL_ACCENT: AccentTheme = {
+  gradStart: "#FB923C", // orange-400
+  gradEnd: "#C2410C", // orange-700
+  solid: "#EA580C", // orange-600
+  onAccent: "#FFFFFF",
+  onAccentMuted: "#FFEDD5", // orange-100
+  chipBg: "#FFEDD5",
+  chipText: "#C2410C",
+};
+
+/**
+ * MACRO colors — the ONE source of truth for คาร์บ/โปรตีน/ไขมัน, shared by the Flex legend AND
+ * the donut PNG (app/api/chart/macro). If these ever drift apart, the chart lies about the card.
+ * Chosen as a wide-hue triad so the three arcs stay distinguishable even at thumbnail size and
+ * for the most common color-vision deficiencies (amber / sky-blue / purple).
+ */
+export const MACRO = {
+  carb: "#F59E0B", // amber-500
+  protein: "#0EA5E9", // sky-500
+  fat: "#A855F7", // purple-500
+  track: "#F1F3F5", // the faint ring behind the arcs (shows through the gaps)
+} as const;
+
 /** Money DIRECTION colors — semantic, independent of the header accent. */
 export const MONEY = {
   income: "#059669", // green (+)
@@ -223,5 +248,33 @@ export function primaryButton(label: string, uri: string, color: string): Record
     color,
     height: "sm",
     action: { type: "uri", label, uri },
+  };
+}
+
+/**
+ * Primary footer button that SENDS a message back as if the user typed it — the in-card
+ * counterpart to a Quick Reply, for the one action a card most wants to invite next
+ * (e.g. a meal card offering "สรุปวันนี้").
+ */
+export function messageButton(label: string, text: string, color: string): Record<string, unknown> {
+  return {
+    type: "button",
+    style: "primary",
+    color,
+    height: "sm",
+    action: { type: "message", label, text },
+  };
+}
+
+/** Small round color dot — the legend marker that ties a text row to a chart color. */
+export function colorDot(color: string, px = 10): Record<string, unknown> {
+  return {
+    type: "box",
+    layout: "vertical",
+    width: `${px}px`,
+    height: `${px}px`,
+    cornerRadius: `${Math.round(px / 2)}px`,
+    backgroundColor: color,
+    contents: [{ type: "filler" }],
   };
 }
