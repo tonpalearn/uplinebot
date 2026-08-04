@@ -25,6 +25,12 @@ export async function GET() {
       /** ชื่อ env ที่เจอคีย์ (ไม่ใช่ค่า) — null = ยังไม่เจอชื่อไหนเลย ดู KEY_ENV_NAMES ว่ารับชื่ออะไรบ้าง */
       keySource: geminiKeySource(),
       model: geminiModel(),
+      /**
+       * ชื่อ env ที่ตั้งไว้จริงใน deployment นี้ซึ่งเกี่ยวกับ Gemini/Google — **ชื่ออย่างเดียว ไม่มีค่า**
+       * ไว้ตอบคำถามเดียว: "ใส่คีย์ไปแล้วแต่ระบบไม่เห็น เพราะตั้งชื่อผิดหรือใส่ผิดที่?"
+       * กรองแคบ ๆ แค่ 2 คำนี้ เพื่อไม่ให้เผยผังคอนฟิกส่วนอื่นของระบบ
+       */
+      googleEnvNames: Object.keys(process.env).filter((k) => /gemini|google/i.test(k)).sort(),
     },
     ts: new Date().toISOString(),
   });
