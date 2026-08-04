@@ -210,15 +210,13 @@ export default function MealPage({ params }: { params: { token: string } }) {
                 <div style={sx.dateText}>{formatThaiDate(date)}</div>
                 {date !== bkkToday() && (
                   <button style={sx.todayBtn} onClick={() => setDate(bkkToday())}>
-                    กลับไปวันนี้
+                    {date > bkkToday() ? "ดูวันข้างหน้าอยู่ · กลับไปวันนี้" : "กลับไปวันนี้"}
                   </button>
                 )}
               </div>
-              <button
-                style={{ ...sx.navBtn, opacity: date >= bkkToday() ? 0.35 : 1 }}
-                disabled={date >= bkkToday()}
-                onClick={() => setDate(shiftDate(date, 1))}
-              >
+              {/* เดินหน้าได้ไม่จำกัด — บอทบันทึกล่วงหน้าได้ ("กิน เช้า พรุ่งนี้") ถ้าปิดปุ่มนี้ไว้ที่
+                  วันนี้ ผู้ใช้จะบันทึกอนาคตได้แต่เปิดดู/แก้ไม่ได้เลย */}
+              <button style={sx.navBtn} onClick={() => setDate(shiftDate(date, 1))}>
                 ›
               </button>
             </div>
