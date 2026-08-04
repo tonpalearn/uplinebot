@@ -1,6 +1,7 @@
 import type { ModuleHandler, LineEvent, ModuleConfig, TenantContext, OutboundMessage } from "../types";
 import { getServiceClient } from "../../db";
 import { parseMealIntent } from "./parse";
+import { getOrCreateMealToken, mealManageUrl } from "../../meal-token";
 import {
   addMealEntries,
   backfillUnresolved,
@@ -26,6 +27,7 @@ import {
   buildDayDetailCard,
   buildDeletedText,
   buildRestoredText,
+  buildMealLinkText,
   mealQuickReply,
 } from "./flex";
 
@@ -188,9 +190,16 @@ export const MealTrackerModule: ModuleHandler = {
         ];
       }
 
+      case "link": {
+        const token = await getOrCreateMealToken(ctx.targetId, lineUserId);
+        return [buildMealLinkText(mealManageUrl(token))];
+      }
+
       case "day_detail": {
         const rows = await getDayEntries(ctx.targetId, lineUserId, intent.occurredOn);
-        return [buildDayDetailCard(rows, intent.occurredOn)];
+        // ปุ่ม "แก้ไขบนเว็บ" ต้องสร้างตอนตอบ เพราะโทเคนผูกกับ "คนที่พิมพ์" ไม่ใช่ตัวการ์ด
+        const token = await getOrCreateMealToken(ctx.targetId, lineUserId);
+        return [buildDayDetailCard(rows, intent.occurredOn, mealManageUrl(token))];
       }
 
       case "delete_items": {

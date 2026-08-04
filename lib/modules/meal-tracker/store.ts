@@ -391,6 +391,164 @@ export async function restoreLastDelete(
   return batch;
 }
 
+export interface UpdateMealInput {
+  id: string;
+  /** เปลี่ยนปริมาณ */
+  qty?: number;
+  qtyUnit?: "g" | "unit";
+  /** ย้ายมื้อ */
+  mealSlot?: MealSlot;
+  /** เปลี่ยนว่าเป็นอาหารอะไร (จับคู่ฐานใหม่ทั้งหมด) */
+  foodName?: string;
+}
+
+/**
+ * แก้รายการอาหารจากหน้าเว็บ — **คำนวณมาโครใหม่ทุกครั้ง** จากอาหารที่จับคู่ได้ ณ ตอนแก้.
+ *
+ * ยึด targetId + lineUserId จากโทเคนเป็นเงื่อนไขใน UPDATE ด้วย (ไม่ใช่แค่ id) — กันคนที่เดา
+ * id ของแถวคนอื่นแล้วยิง PATCH ตรง ๆ. ถ้าไม่ใช่ของตัวเอง จะอัปเดตไม่โดนแถวไหนเลยแล้วคืน null.
+ *
+ * ถ้าจับคู่อาหารไม่ได้ (ชื่อใหม่ที่ไม่มีในฐาน) → บันทึกเป็น resolved=false มาโคร 0 ตามกติกาเดิม
+ * ของโมดูล: ไม่เดาค่าให้ ดีกว่าใส่ตัวเลขมั่ว.
+ */
+export async function updateMealEntry(
+  tenantId: string,
+  targetId: string,
+  lineUserId: string | null,
+  input: UpdateMealInput
+): Promise<MealEntryRow | null> {
+  const supabase = getServiceClient();
+
+  let read = supabase
+    .from("upl_meal_entries")
+    .select(ENTRY_COLUMNS)
+    .eq("id", input.id)
+    .eq("target_id", targetId)
+    .is("deleted_at", null);
+  if (lineUserId) read = read.eq("line_user_id", lineUserId);
+
+  const { data: found, error: readErr } = await read.maybeSingle();
+  if (readErr) throw new Error(`Failed to read meal entry ${input.id}: ${readErr.message}`);
+  if (!found) return null;
+
+  const current = found as unknown as MealEntryRow;
+  const name = (input.foodName ?? current.food_name).trim();
+  const qty = input.qty ?? Number(current.qty);
+  const qtyUnit = input.qtyUnit ?? current.qty_unit;
+  const mealSlot = input.mealSlot ?? current.meal_slot;
+
+  if (!name) throw new Error("foodName must not be empty");
+  if (!Number.isFinite(qty) || qty <= 0) throw new Error("qty must be a positive number");
+
+  const food = await findFood(tenantId, name);
+  const line: ParsedFoodLine = {
+    name,
+    qty,
+    unit: qtyUnit,
+    unitLabel: null,
+    raw: `${name} ${qty}${qtyUnit === "g" ? " g" : ""}`.trim(),
+  };
+  const m = food
+    ? computeLineMacros(line, food)
+    : { kcal: 0, carbG: 0, proteinG: 0, fatG: 0, grams: null };
+
+  const { data, error } = await supabase
+    .from("upl_meal_entries")
+    .update({
+      food_id: food?.id ?? null,
+      food_name: food?.name ?? name,
+      qty,
+      qty_unit: qtyUnit,
+      meal_slot: mealSlot,
+      grams: m.grams,
+      kcal: m.kcal,
+      carb_g: m.carbG,
+      protein_g: m.proteinG,
+      fat_g: m.fatG,
+      resolved: food !== null,
+      food_source: food?.source ?? null,
+      raw_text: line.raw,
+    })
+    .eq("id", input.id)
+    .select(ENTRY_COLUMNS)
+    .maybeSingle();
+
+  if (error) throw new Error(`Failed to update meal entry ${input.id}: ${error.message}`);
+  return (data as unknown as MealEntryRow) ?? null;
+}
+
+/** แถวฐานอาหารสำหรับหน้าเว็บ (รวมฐานกลาง tenant_id = null) */
+export interface FoodItemRow {
+  id: string;
+  tenant_id: string | null;
+  name: string;
+  aliases: string | null;
+  basis: FoodBasis;
+  unit_label: string | null;
+  unit_grams: number | null;
+  kcal: number;
+  carb_g: number;
+  protein_g: number;
+  fat_g: number;
+  source: string;
+  updated_at: string | null;
+}
+
+const FOOD_COLUMNS =
+  "id, tenant_id, name, aliases, basis, unit_label, unit_grams, kcal, carb_g, protein_g, fat_g, source, updated_at";
+
+/**
+ * ลิสต์ฐานอาหารที่ tenant นี้ "มองเห็น" = ของตัวเอง + ฐานกลาง.
+ * `q` ค้นจากชื่อและคำเรียกอื่น (ilike ธรรมดา — หน้าเว็บมีช่องพิมพ์ ผู้ใช้แก้คำเองได้
+ * ไม่ต้องใช้ fuzzy แบบตอนบอทเดาจากข้อความแชท)
+ */
+export async function listFoods(
+  tenantId: string,
+  q: string | null,
+  limit = 200
+): Promise<FoodItemRow[]> {
+  const supabase = getServiceClient();
+  let query = supabase
+    .from("upl_food_items")
+    .select(FOOD_COLUMNS)
+    .or(`tenant_id.eq.${tenantId},tenant_id.is.null`);
+
+  const term = (q ?? "").trim();
+  if (term) {
+    // escape , และ ) ที่จะทำให้ไวยากรณ์ or() ของ PostgREST พัง
+    const safe = term.replace(/[,()]/g, " ").trim();
+    if (safe) query = query.or(`name.ilike.%${safe}%,aliases.ilike.%${safe}%`);
+  }
+
+  const { data, error } = await query
+    // ของ tenant มาก่อนฐานกลาง แล้วเรียงตามชื่อ
+    .order("tenant_id", { ascending: false, nullsFirst: false })
+    .order("name", { ascending: true })
+    .limit(limit);
+
+  if (error) throw new Error(`Failed to list foods for tenant ${tenantId}: ${error.message}`);
+  return (data ?? []) as unknown as FoodItemRow[];
+}
+
+/**
+ * ลบอาหารออกจากฐาน — **เฉพาะของ tenant ตัวเอง**. ฐานกลาง (tenant_id = null) ลบไม่ได้เด็ดขาด
+ * เพราะใช้ร่วมกันทุกธุรกิจ — ธุรกิจที่ไม่อยากใช้ค่ากลางให้ "สอนทับ" ชื่อเดียวกันแทน
+ * (meal_food_search ให้ของ tenant ชนะฐานกลางอยู่แล้ว).
+ */
+export async function deleteTenantFood(tenantId: string, foodId: string): Promise<boolean> {
+  const supabase = getServiceClient();
+  const { data, error } = await supabase
+    .from("upl_food_items")
+    .delete()
+    .eq("id", foodId)
+    .eq("tenant_id", tenantId)
+    .select("id")
+    .maybeSingle();
+
+  if (error) throw new Error(`Failed to delete food ${foodId}: ${error.message}`);
+  return data !== null;
+}
+
 export interface TeachFoodInput {
   name: string;
   carbG: number;

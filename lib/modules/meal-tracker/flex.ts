@@ -66,6 +66,7 @@ export function mealQuickReply(): { items: QuickReplyItem[] } {
       { type: "action", action: { type: "message", label: "☀️ กลางวัน", text: "กิน กลางวัน " } },
       { type: "action", action: { type: "message", label: "🌙 เย็น", text: "กิน เย็น " } },
       { type: "action", action: { type: "message", label: "↩️ ลบล่าสุด", text: "ลบกิน" } },
+      { type: "action", action: { type: "message", label: "✏️ จัดการ", text: "จัดการอาหาร" } },
     ],
   };
 }
@@ -549,7 +550,11 @@ export function buildEmptyRecordText(): OutboundMessage {
  * ต่างจาก buildDayCard ตรงที่การ์ดนี้ตอบคำถาม "กินอะไร" (ส่วนประกอบ) ส่วนการ์ดสรุปตอบ
  * "ได้สารอาหารเท่าไร" (ตัวเลข) — เลยไม่มีโดนัทในนี้ ให้ที่ว่างกับรายการแทน.
  */
-export function buildDayDetailCard(rows: MealEntryRow[], occurredOn: string): OutboundMessage {
+export function buildDayDetailCard(
+  rows: MealEntryRow[],
+  occurredOn: string,
+  manageUrl?: string
+): OutboundMessage {
   if (rows.length === 0) {
     return {
       type: "text",
@@ -694,7 +699,19 @@ export function buildDayDetailCard(rows: MealEntryRow[], occurredOn: string): Ou
       layout: "vertical",
       paddingAll: "16px",
       spacing: "sm",
-      contents: [messageButton("📊 ดูสัดส่วนสารอาหาร", "สรุปกิน", MEAL_ACCENT.solid)],
+      contents: [
+        messageButton("📊 ดูสัดส่วนสารอาหาร", "สรุปกิน", MEAL_ACCENT.solid),
+        ...(manageUrl
+          ? [
+              {
+                type: "button",
+                style: "link",
+                height: "sm",
+                action: { type: "uri", label: "✏️ แก้ไขบนเว็บ", uri: manageUrl },
+              },
+            ]
+          : []),
+      ],
     },
     styles: { header: headerStyle(MEAL_ACCENT), footer: footerStyle() },
   };
@@ -743,6 +760,15 @@ export function buildRestoredText(rows: MealEntryRow[]): OutboundMessage {
   return {
     type: "text",
     text: `♻️ กู้คืนแล้ว ${rows.length} รายการ · +${formatKcal(kcal)} kcal\n${names}`,
+    quickReply: mealQuickReply(),
+  };
+}
+
+/** ลิงก์หน้าเว็บจัดการอาหาร — เตือนเรื่องความเป็นส่วนตัวเพราะโทเคนคือสิทธิ์ทั้งหมด */
+export function buildMealLinkText(url: string): OutboundMessage {
+  return {
+    type: "text",
+    text: `🍽️ จัดการอาหารของคุณ:\n${url}\n\nในเว็บทำได้: แก้ปริมาณ/มื้อ/ชื่ออาหาร · ลบและกู้คืน · ดูฐานข้อมูลอาหารทั้งหมด · สั่งให้ AI เรียนรู้อาหารใหม่\n\n⚠️ ลิงก์นี้เปิดไดอารี่อาหารของคุณคนเดียว — อย่าส่งต่อให้ใคร`,
     quickReply: mealQuickReply(),
   };
 }

@@ -61,6 +61,8 @@ export type MealIntent =
   | { action: "restore" }
   /** รายละเอียดรายมื้อ: กินอะไรไปบ้าง */
   | { action: "day_detail"; occurredOn: string }
+  /** ขอลิงก์หน้าเว็บจัดการอาหาร */
+  | { action: "link" }
   | { action: "help" }
   | null;
 
@@ -426,6 +428,8 @@ const CMD_RESTORE = /^(?:กู้กิน|เลิกลบกิน|ยก�
 const CMD_DETAIL = /^(?:รายละเอียดกิน|รายการกิน|กินอะไรบ้าง|กินอะไรไปบ้าง|ดูรายการกิน|รายละเอียดมื้อ)(?:\s+(.*))?$/i;
 /** "ทั้งวัน"/"วันนี้"/"หมด" ในบริบทคำสั่งลบ = ลบทุกรายการของวันนั้น */
 const DELETE_ALL_RE = /^(?:ทั้งวัน|ทั้งหมด|หมด|วันนี้|all)$/i;
+/** ขอลิงก์หน้าเว็บจัดการอาหาร/ฐานอาหาร */
+const CMD_LINK = /^(?:จัดการอาหาร|แก้กิน|แก้ไขกิน|เว็บกิน|ลิงก์กิน|ลิงค์กิน|ฐานอาหาร|จัดการกิน)$/i;
 /** วิธีใช้ */
 const CMD_HELP = /^(?:วิธีกิน|ช่วยกิน|help\s*กิน|กินยังไง)$/i;
 
@@ -502,6 +506,7 @@ export function parseMealIntent(text: string, now: Date): MealIntent {
   const today = bkkToday(now);
 
   if (CMD_HELP.test(firstLine)) return { action: "help" };
+  if (CMD_LINK.test(firstLine)) return { action: "link" };
   // ต้องเช็ค UNDO (ไม่มีอาร์กิวเมนต์) ก่อน DELETE (มีอาร์กิวเมนต์) — สองตัวนี้ใช้คำนำหน้าเดียวกัน
   if (CMD_UNDO.test(firstLine)) return { action: "undo" };
 
