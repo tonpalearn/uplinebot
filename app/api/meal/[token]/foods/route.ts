@@ -29,6 +29,31 @@ function unauthorized(): NextResponse {
   return NextResponse.json({ ok: false, reason: "invalid_token" }, { status: 401 });
 }
 
+/**
+ * upsertTenantFood() คืน FoodRef (camelCase) แต่ GET คืนแถวดิบจาก DB (snake_case) —
+ * ถ้าปล่อยไว้ ฝั่งหน้าเว็บจะได้อ็อบเจกต์คนละรูปจากสองปลายทางที่ "ควรจะเป็นของอย่างเดียวกัน"
+ * แปลงให้เป็นรูปเดียวกับ GET เสมอ เพื่อให้เอาไปต่อท้ายลิสต์ได้ตรง ๆ
+ */
+function toRowShape(f: {
+  id: string; name: string; basis: string; unitLabel: string | null; unitGrams: number | null;
+  kcal: number; carbG: number; proteinG: number; fatG: number; source: string;
+}, tenantId: string) {
+  return {
+    id: f.id,
+    tenant_id: tenantId,
+    name: f.name,
+    aliases: null,
+    basis: f.basis,
+    unit_label: f.unitLabel,
+    unit_grams: f.unitGrams,
+    kcal: f.kcal,
+    carb_g: f.carbG,
+    protein_g: f.proteinG,
+    fat_g: f.fatG,
+    source: f.source,
+  };
+}
+
 export async function GET(req: NextRequest, ctx: RouteCtx): Promise<NextResponse> {
   const auth = await validateMealToken(ctx.params.token);
   if (!auth) return unauthorized();
@@ -84,7 +109,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx): Promise<NextRespons
         aliases: est.name.trim().toLowerCase() === name.toLowerCase() ? null : name,
         source: "ai-estimate",
       });
-      return NextResponse.json({ ok: true, food, confidence: est.confidence, via: "ai" });
+      return NextResponse.json({ ok: true, food: toRowShape(food, auth.tenantId), confidence: est.confidence, via: "ai" });
     } catch (err) {
       return NextResponse.json(
         { ok: false, reason: err instanceof Error ? err.message : "learn_failed" },
@@ -126,7 +151,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx): Promise<NextRespons
       aliases: typeof body.aliases === "string" && body.aliases.trim() ? body.aliases.trim() : null,
       source: "chat",
     });
-    return NextResponse.json({ ok: true, food, via: "manual" });
+    return NextResponse.json({ ok: true, food: toRowShape(food, auth.tenantId), via: "manual" });
   } catch (err) {
     return NextResponse.json(
       { ok: false, reason: err instanceof Error ? err.message : "save_failed" },
