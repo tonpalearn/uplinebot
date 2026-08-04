@@ -825,25 +825,6 @@ function FoodsTab({ token, flash }: { token: string; flash: (m: string) => void 
     }
   };
 
-  const remove = async (f: Food) => {
-    setBusy(true);
-    try {
-      const res = await fetch(`/api/meal/${token}/foods`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: f.id }),
-      });
-      const d = await res.json();
-      if (!res.ok || !d.ok) throw new Error(d.reason ?? `HTTP ${res.status}`);
-      flash(`🗑️ ลบ ${f.name} แล้ว`);
-      await load(q);
-    } catch (e) {
-      flash(`❌ ${e instanceof Error ? e.message : "ลบไม่สำเร็จ"}`);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const mine = foods.filter((f) => f.tenant_id !== null);
   const shared = foods.filter((f) => f.tenant_id === null);
 
@@ -907,7 +888,7 @@ function FoodsTab({ token, flash }: { token: string; flash: (m: string) => void 
                 <span style={sx.slotKcal}>{mine.length} รายการ</span>
               </div>
               {mine.map((f) => (
-                <FoodRow key={f.id} food={f} onDelete={() => void remove(f)} busy={busy} />
+                <FoodRow key={f.id} food={f} token={token} flash={flash} busy={busy} onChanged={() => load(q)} />
               ))}
             </section>
           )}
@@ -918,7 +899,7 @@ function FoodsTab({ token, flash }: { token: string; flash: (m: string) => void 
                 <span style={sx.slotKcal}>{shared.length} รายการ</span>
               </div>
               {shared.map((f) => (
-                <FoodRow key={f.id} food={f} busy={busy} />
+                <FoodRow key={f.id} food={f} token={token} flash={flash} busy={busy} onChanged={() => load(q)} />
               ))}
             </section>
           )}
@@ -928,29 +909,242 @@ function FoodsTab({ token, flash }: { token: string; flash: (m: string) => void 
   );
 }
 
-function FoodRow({ food, onDelete, busy }: { food: Food; onDelete?: () => void; busy: boolean }) {
+/**
+ * หนึ่งแถวในฐานอาหาร — กดเพื่อกางฟอร์มแก้ค่า.
+ *
+ * ของ tenant → แก้ในที่ (PATCH) · ฐานกลาง → แก้ไม่ได้ แต่ "คัดลอกเป็นของฉันแล้วแก้" ได้
+ * (POST ชื่อเดิม) เพราะอาหารของ tenant ชนะฐานกลางเสมอตอนจับคู่ (ดู meal_food_search)
+ */
+function FoodRow({
+  food, token, flash, onChanged, busy,
+}: {
+  food: Food;
+  token: string;
+  flash: (m: string) => void;
+  onChanged: () => Promise<void>;
+  busy: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const mine = food.tenant_id !== null;
+
   const basis =
     food.basis === "per_100g"
       ? "ต่อ 100 g"
       : `ต่อ 1 ${food.unit_label ?? "ที่"}${food.unit_grams ? ` (≈${g(food.unit_grams)} g)` : ""}`;
+
   return (
-    <div style={sx.foodRow}>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={sx.entryName}>
-          {food.source === "ai-estimate" && <span title="ค่าประมาณจาก AI">🤖 </span>}
-          {food.name}
+    <div style={sx.foodItem}>
+      <div style={sx.foodRow} onClick={() => setOpen((v) => !v)}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={sx.entryName}>
+            {food.source === "ai-estimate" && <span title="ค่าประมาณจาก AI">🤖 </span>}
+            {food.name}
+          </div>
+          <div style={sx.entryMeta}>
+            {basis} · C {g(food.carb_g)} · P {g(food.protein_g)} · F {g(food.fat_g)}
+            {food.aliases && ` · เรียกอีกอย่าง: ${food.aliases}`}
+          </div>
         </div>
-        <div style={sx.entryMeta}>
-          {basis} · C {g(food.carb_g)} · P {g(food.protein_g)} · F {g(food.fat_g)}
-          {food.aliases && ` · เรียกอีกอย่าง: ${food.aliases}`}
-        </div>
+        <div style={sx.entryKcal}>{kcal(food.kcal)}</div>
+        <span style={{ ...sx.chev, transform: open ? "rotate(90deg)" : "none" }}>›</span>
       </div>
-      <div style={sx.entryKcal}>{kcal(food.kcal)}</div>
-      {onDelete && (
-        <button style={sx.rowDel} disabled={busy} onClick={onDelete} title="ลบออกจากฐาน">
-          ✕
-        </button>
+
+      {open && (
+        <FoodEditForm
+          food={food}
+          mine={mine}
+          token={token}
+          flash={flash}
+          busy={busy}
+          onDone={async () => {
+            setOpen(false);
+            await onChanged();
+          }}
+        />
       )}
+    </div>
+  );
+}
+
+function FoodEditForm({
+  food, mine, token, flash, busy, onDone,
+}: {
+  food: Food;
+  mine: boolean;
+  token: string;
+  flash: (m: string) => void;
+  busy: boolean;
+  onDone: () => Promise<void>;
+}) {
+  const [name, setName] = useState(food.name);
+  const [c, setC] = useState(String(food.carb_g));
+  const [pr, setPr] = useState(String(food.protein_g));
+  const [f, setF] = useState(String(food.fat_g));
+  const [basis, setBasis] = useState<Food["basis"]>(food.basis);
+  const [unitLabel, setUnitLabel] = useState(food.unit_label ?? "จาน");
+  const [unitGrams, setUnitGrams] = useState(food.unit_grams === null ? "" : String(food.unit_grams));
+  const [aliases, setAliases] = useState(food.aliases ?? "");
+  const [saving, setSaving] = useState(false);
+
+  // แสดงพลังงานที่จะได้ทันทีระหว่างพิมพ์ — ผู้ใช้เห็นผลก่อนกดบันทึก ไม่ต้องเดา
+  const previewKcal = Math.round(Number(c || 0) * 4 + Number(pr || 0) * 4 + Number(f || 0) * 9);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const payload = {
+        name: name.trim(),
+        carbG: Number(c || 0),
+        proteinG: Number(pr || 0),
+        fatG: Number(f || 0),
+        basis,
+        unitLabel: basis === "per_serving" ? unitLabel.trim() || "ที่" : null,
+        unitGrams: unitGrams ? Number(unitGrams) : null,
+        aliases: aliases.trim() || null,
+      };
+
+      // ของ tenant = แก้ในที่ · ฐานกลาง = สร้างสำเนาเป็นของ tenant (ชื่อเดิมทับได้เลย)
+      const res = mine
+        ? await fetch(`/api/meal/${token}/foods`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: food.id, ...payload }),
+          })
+        : await fetch(`/api/meal/${token}/foods`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+
+      const d = await res.json();
+      if (!res.ok || !d.ok) throw new Error(d.reason ?? `HTTP ${res.status}`);
+
+      flash(
+        mine
+          ? `✅ แก้ ${d.food.name} แล้ว (${kcal(d.food.kcal)} kcal)` +
+              (d.recalculated > 0 ? ` · ปรับรายการในไดอารี่ ${d.recalculated} รายการให้ด้วย` : "")
+          : `✅ คัดลอก ${d.food.name} มาเป็นของคุณแล้ว — จะใช้ค่านี้แทนฐานกลาง`
+      );
+      await onDone();
+    } catch (e) {
+      flash(`❌ ${e instanceof Error ? e.message : "บันทึกไม่สำเร็จ"}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/meal/${token}/foods`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: food.id }),
+      });
+      const d = await res.json();
+      if (!res.ok || !d.ok) throw new Error(d.reason ?? `HTTP ${res.status}`);
+      flash(`🗑️ ลบ ${food.name} แล้ว`);
+      await onDone();
+    } catch (e) {
+      flash(`❌ ${e instanceof Error ? e.message : "ลบไม่สำเร็จ"}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const disabled = saving || busy;
+
+  return (
+    <div style={sx.editBox}>
+      {!mine && (
+        <div style={sx.sharedNote}>
+          นี่คืออาหารจากฐานกลางที่ใช้ร่วมกันทุกธุรกิจ จึงแก้ตรง ๆ ไม่ได้ —
+          กดบันทึกเพื่อ<b>สร้างเป็นของคุณเอง</b> ระบบจะใช้ค่าของคุณแทนฐานกลางตั้งแต่นั้น
+        </div>
+      )}
+
+      <label style={sx.field}>
+        <span style={sx.fieldLabel}>ชื่ออาหาร</span>
+        <input style={sx.input} value={name} onChange={(e) => setName(e.target.value)} />
+      </label>
+
+      <div className="meal-fieldrow" style={sx.fieldRow}>
+        {([["คาร์บ (g)", c, setC], ["โปรตีน (g)", pr, setPr], ["ไขมัน (g)", f, setF]] as const).map(
+          ([lab, val, set]) => (
+            <label key={lab} style={{ ...sx.field, flex: 1 }}>
+              <span style={sx.fieldLabel}>{lab}</span>
+              <input
+                style={sx.input}
+                type="number"
+                min="0"
+                step="any"
+                inputMode="decimal"
+                value={val}
+                onChange={(e) => set(e.target.value)}
+              />
+            </label>
+          )
+        )}
+      </div>
+
+      <div className="meal-fieldrow" style={sx.fieldRow}>
+        <label style={{ ...sx.field, flex: 1.4 }}>
+          <span style={sx.fieldLabel}>คิดค่าต่อ</span>
+          <select style={sx.input} value={basis} onChange={(e) => setBasis(e.target.value as Food["basis"])}>
+            <option value="per_serving">1 หน่วยเสิร์ฟ</option>
+            <option value="per_100g">100 กรัม</option>
+          </select>
+        </label>
+        {basis === "per_serving" && (
+          <label style={{ ...sx.field, flex: 1 }}>
+            <span style={sx.fieldLabel}>หน่วย</span>
+            <input style={sx.input} value={unitLabel} onChange={(e) => setUnitLabel(e.target.value)} />
+          </label>
+        )}
+        <label style={{ ...sx.field, flex: 1 }}>
+          <span style={sx.fieldLabel}>น้ำหนัก/หน่วย (g)</span>
+          <input
+            style={sx.input}
+            type="number"
+            min="0"
+            step="any"
+            inputMode="decimal"
+            value={unitGrams}
+            onChange={(e) => setUnitGrams(e.target.value)}
+          />
+        </label>
+      </div>
+
+      <label style={sx.field}>
+        <span style={sx.fieldLabel}>คำเรียกอื่น (ไม่บังคับ — คั่นด้วยเว้นวรรค)</span>
+        <input style={sx.input} value={aliases} onChange={(e) => setAliases(e.target.value)} />
+      </label>
+
+      <div style={sx.previewBox}>
+        พลังงานที่จะได้ = <b>{kcal(previewKcal)} kcal</b>{" "}
+        {basis === "per_100g" ? "ต่อ 100 กรัม" : `ต่อ 1 ${unitLabel || "ที่"}`}
+      </div>
+
+      <div style={sx.editActions}>
+        <button
+          style={{ ...sx.saveBtn, opacity: disabled || !name.trim() ? 0.5 : 1 }}
+          disabled={disabled || !name.trim()}
+          onClick={() => void save()}
+        >
+          {saving ? "กำลังบันทึก…" : mine ? "💾 บันทึก" : "💾 สร้างเป็นของฉัน"}
+        </button>
+        {mine && (
+          <button style={sx.delBtn} disabled={disabled} onClick={() => void remove()}>
+            🗑️ ลบ
+          </button>
+        )}
+      </div>
+
+      <div style={sx.editHint}>
+        {mine
+          ? "พลังงานคิดจากสารอาหารอัตโนมัติ · บันทึกแล้วระบบจะปรับรายการในไดอารี่ย้อนหลัง 7 วันที่ใช้อาหารนี้ให้ด้วย · ค่าที่แก้เองจะไม่ติดป้าย 🤖 อีก"
+          : "ฐานกลางยังอยู่เหมือนเดิมสำหรับธุรกิจอื่น"}
+      </div>
     </div>
   );
 }
@@ -1330,18 +1524,16 @@ const sx: Record<string, React.CSSProperties> = {
     gap: 11,
   },
 
-  foodRow: { display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderBottom: `1px solid ${T.border}` },
-  rowDel: {
-    border: `1px solid ${T.border}`,
-    background: "transparent",
-    color: T.muted2,
+  foodItem: { borderBottom: `1px solid ${T.border}` },
+  sharedNote: {
+    padding: "10px 12px",
     borderRadius: T.radiusSm,
-    width: 30,
-    height: 30,
-    cursor: "pointer",
-    flexShrink: 0,
-    fontSize: 14,
+    background: T.primaryWeak,
+    color: T.fg,
+    fontSize: 13,
+    lineHeight: 1.7,
   },
+  foodRow: { display: "flex", alignItems: "center", gap: 11, padding: "11px 0", cursor: "pointer" },
 
   goalEmpty: {
     width: "100%",

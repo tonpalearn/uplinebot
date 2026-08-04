@@ -594,6 +594,156 @@ export async function listFoods(
   return (data ?? []) as unknown as FoodItemRow[];
 }
 
+export interface UpdateFoodInput {
+  name?: string;
+  carbG?: number;
+  proteinG?: number;
+  fatG?: number;
+  basis?: FoodBasis;
+  unitLabel?: string | null;
+  unitGrams?: number | null;
+  aliases?: string | null;
+}
+
+/**
+ * แก้ค่าอาหารในฐาน — **เฉพาะของ tenant ตัวเอง** (ฐานกลางแก้ไม่ได้ ดู deleteTenantFood).
+ * ใช้เมื่อ AI ประเมินมาแล้วเจ้าของธุรกิจเห็นว่าเพี้ยน — คนต้องทับ AI ได้เสมอ.
+ *
+ * source ถูกตั้งเป็น 'chat' โดยอัตโนมัติเมื่อมีการแก้ค่ามาโคร เพราะตัวเลข "ผ่านตาคนแล้ว"
+ * ป้าย 🤖 บนการ์ดจึงหายไปตามความจริง — ถ้ายังติดป้าย AI ไว้ทั้งที่คนแก้เองแล้ว
+ * ผู้ใช้จะไม่เชื่อตัวเลขที่ตัวเองยืนยันมากับมือ
+ */
+export async function updateTenantFood(
+  tenantId: string,
+  foodId: string,
+  patch: UpdateFoodInput
+): Promise<FoodRef | null> {
+  const supabase = getServiceClient();
+
+  const { data: current, error: readErr } = await supabase
+    .from("upl_food_items")
+    .select(FOOD_COLUMNS)
+    .eq("id", foodId)
+    .eq("tenant_id", tenantId)
+    .maybeSingle();
+
+  if (readErr) throw new Error(`Failed to read food ${foodId}: ${readErr.message}`);
+  if (!current) return null; // ไม่มี หรือเป็นฐานกลาง/ของ tenant อื่น
+
+  const row = current as unknown as FoodItemRow;
+  const carbG = patch.carbG ?? Number(row.carb_g);
+  const proteinG = patch.proteinG ?? Number(row.protein_g);
+  const fatG = patch.fatG ?? Number(row.fat_g);
+  const macrosChanged =
+    patch.carbG !== undefined || patch.proteinG !== undefined || patch.fatG !== undefined;
+
+  const name = patch.name?.trim() || row.name;
+  const basis = patch.basis ?? row.basis;
+
+  const { data, error } = await supabase
+    .from("upl_food_items")
+    .update({
+      name,
+      basis,
+      unit_label: patch.unitLabel === undefined ? row.unit_label : patch.unitLabel,
+      unit_grams: patch.unitGrams === undefined ? row.unit_grams : patch.unitGrams,
+      aliases: patch.aliases === undefined ? row.aliases : patch.aliases,
+      carb_g: carbG,
+      protein_g: proteinG,
+      fat_g: fatG,
+      // kcal คำนวณจากมาโครด้วย Atwater เสมอ — ห้ามให้ผู้ใช้กรอกเอง ไม่งั้นจะขัดกับ % บนการ์ด
+      kcal: Math.round(carbG * 4 + proteinG * 4 + fatG * 9),
+      source: macrosChanged ? "chat" : row.source,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", foodId)
+    .eq("tenant_id", tenantId)
+    .select(FOOD_COLUMNS)
+    .maybeSingle();
+
+  if (error) throw new Error(`Failed to update food ${foodId}: ${error.message}`);
+  if (!data) return null;
+
+  const r = data as unknown as FoodItemRow;
+  return {
+    id: r.id,
+    name: r.name,
+    basis: r.basis,
+    unitLabel: r.unit_label,
+    unitGrams: r.unit_grams === null ? null : Number(r.unit_grams),
+    kcal: Number(r.kcal),
+    carbG: Number(r.carb_g),
+    proteinG: Number(r.protein_g),
+    fatG: Number(r.fat_g),
+    source: r.source,
+  };
+}
+
+/**
+ * คำนวณมาโครของรายการในไดอารี่ใหม่ ให้ตรงกับค่าอาหารที่เพิ่งแก้.
+ *
+ * ปกติค่ามาโครใน upl_meal_entries เป็น snapshot — แก้ฐานอาหารทีหลังไม่ย้อนไปแก้ประวัติ
+ * (ตั้งใจ: ประวัติควรสะท้อนสิ่งที่เชื่อ ณ ตอนนั้น). **แต่กรณีนี้ต่าง** — ผู้ใช้แก้เพราะค่าเดิม
+ * "ผิด" ไม่ใช่เพราะสูตรเปลี่ยน ถ้าไม่ย้อนแก้ให้ ตัวเลขวันนี้ก็ยังผิดอยู่ทั้งที่เพิ่งแก้ไปหมาด ๆ
+ * จึงย้อนแก้ให้ในกรอบเวลาสั้น ๆ (ค่าเริ่มต้น 7 วัน) แล้วรายงานจำนวนแถวที่กระทบกลับไปด้วย
+ *
+ * จำกัดที่ (targetId, lineUserId) ของโทเคน — แก้ฐานของธุรกิจไม่ไปยุ่งไดอารี่ของคนอื่น
+ */
+export async function recalcEntriesForFood(
+  targetId: string,
+  lineUserId: string | null,
+  food: FoodRef,
+  sinceDays = 7
+): Promise<number> {
+  const supabase = getServiceClient();
+  const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  let q = supabase
+    .from("upl_meal_entries")
+    .select(ENTRY_COLUMNS)
+    .eq("target_id", targetId)
+    .eq("food_id", food.id)
+    .gte("occurred_on", since)
+    .is("deleted_at", null);
+  if (lineUserId) q = q.eq("line_user_id", lineUserId);
+
+  const { data, error } = await q;
+  if (error) throw new Error(`Failed to load entries for food ${food.id}: ${error.message}`);
+
+  const rows = (data ?? []) as unknown as MealEntryRow[];
+  let updated = 0;
+
+  for (const row of rows) {
+    const line: ParsedFoodLine = {
+      name: food.name,
+      qty: Number(row.qty),
+      unit: row.qty_unit,
+      unitLabel: null,
+      raw: row.raw_text ?? food.name,
+    };
+    const m = computeLineMacros(line, food);
+
+    const { error: upErr } = await supabase
+      .from("upl_meal_entries")
+      .update({
+        food_name: food.name,
+        grams: m.grams,
+        kcal: m.kcal,
+        carb_g: m.carbG,
+        protein_g: m.proteinG,
+        fat_g: m.fatG,
+        resolved: true,
+        food_source: food.source,
+      })
+      .eq("id", row.id);
+
+    if (upErr) throw new Error(`Failed to recalc entry ${row.id}: ${upErr.message}`);
+    updated += 1;
+  }
+
+  return updated;
+}
+
 /**
  * ลบอาหารออกจากฐาน — **เฉพาะของ tenant ตัวเอง**. ฐานกลาง (tenant_id = null) ลบไม่ได้เด็ดขาด
  * เพราะใช้ร่วมกันทุกธุรกิจ — ธุรกิจที่ไม่อยากใช้ค่ากลางให้ "สอนทับ" ชื่อเดียวกันแทน
