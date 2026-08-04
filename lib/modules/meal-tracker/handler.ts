@@ -1,4 +1,5 @@
 import type { ModuleHandler, LineEvent, ModuleConfig, TenantContext, OutboundMessage } from "../types";
+import { getServiceClient } from "../../db";
 import { parseMealIntent } from "./parse";
 import {
   addMealEntries,
@@ -44,6 +45,26 @@ import {
  * "ต้องขึ้นคำเตือนเสมอ" — เราไม่เดาค่าสารอาหารให้ผู้ใช้เด็ดขาด เพราะตัวเลขที่มั่วแย่กว่าตัวเลขที่ขาด.
  */
 
+/**
+ * matchesIntent() ได้ config มาแล้ว แต่ handleEvent() ได้แค่ (event, ctx) ตามสัญญา ModuleHandler
+ * จึงต้องโหลดซ้ำเองด้วย ctx.targetId (แพตเทิร์นเดียวกับ knowledge-base/broadcast).
+ * อ่านเฉพาะตอน "record" เท่านั้น — เส้นทางอื่นไม่ต้องแตะ DB เพิ่ม.
+ */
+async function loadModuleConfig(targetId: string): Promise<ModuleConfig> {
+  const supabase = getServiceClient();
+  const { data, error } = await supabase
+    .from("upl_module_configs")
+    .select("settings")
+    .eq("target_id", targetId)
+    .eq("module_key", "meal_tracker")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to load meal_tracker config for target "${targetId}": ${error.message}`);
+  }
+  return (data?.settings as ModuleConfig) ?? {};
+}
+
 export const MealTrackerModule: ModuleHandler = {
   key: "meal_tracker",
 
@@ -68,11 +89,26 @@ export const MealTrackerModule: ModuleHandler = {
       case "record": {
         if (intent.items.length === 0) return [buildEmptyRecordText()];
 
-        const resolved = await resolveLines(ctx.tenantId, intent.items);
+        // AI mode เปิดโดยค่าเริ่มต้น — ปิดต่อกลุ่มได้ด้วย config `ai_food_lookup: false`
+        const config = await loadModuleConfig(ctx.targetId);
+        const resolved = await resolveLines(ctx.tenantId, intent.items, {
+          aiEnabled: config.ai_food_lookup !== false,
+        });
         await addMealEntries(
           { targetId: ctx.targetId, lineUserId, occurredOn: intent.occurredOn, slot: intent.slot },
           resolved
         );
+
+        // อาหารที่ AI เพิ่งเรียนรู้ในรอบนี้ → ย้อนเติมรายการเก่าที่เคยบันทึกเป็น "ยังไม่รู้จัก"
+        // (ชื่อเดียวกัน แชทเดียวกัน ย้อน 7 วัน) เพื่อให้สรุปย้อนหลังไม่ขาดหายอีกต่อไป
+        for (const r of resolved) {
+          if (!r.viaAi || !r.food) continue;
+          try {
+            await backfillUnresolved(ctx.targetId, r.line.name, r.food);
+          } catch (err) {
+            console.warn(`[meal-ai] backfill failed: ${err instanceof Error ? err.message : err}`);
+          }
+        }
 
         // โหลด "ทั้งมื้อของวันนั้น" กลับมา เพื่อให้การ์ดสะสมยอดได้เมื่อพิมพ์เพิ่มทีหลัง
         const dayRows = await getDayEntries(ctx.targetId, lineUserId, intent.occurredOn);

@@ -20,6 +20,8 @@ export interface DaySummary {
   count: number;
   /** ชื่ออาหารที่ยังจับคู่ไม่ได้ (ไม่ซ้ำ) — ต้องโชว์เตือน ไม่งั้นยอดรวมจะต่ำกว่าความจริงแบบเงียบ ๆ */
   unresolvedNames: string[];
+  /** ชื่ออาหารที่ตัวเลขมาจาก AI ประเมิน (ไม่ซ้ำ) — ต้องติดป้ายบนการ์ดเสมอ */
+  aiNames: string[];
 }
 
 /** แถว DB → Macros (Postgres numeric อาจส่งมาเป็น string จึง Number() ทุกตัว) */
@@ -45,12 +47,16 @@ export function aggregateDay(rows: MealEntryRow[]): DaySummary {
   }
 
   const unresolvedNames: string[] = [];
+  const aiNames: string[] = [];
   for (const r of rows) {
-    if (r.resolved) continue;
-    if (!unresolvedNames.includes(r.food_name)) unresolvedNames.push(r.food_name);
+    if (!r.resolved) {
+      if (!unresolvedNames.includes(r.food_name)) unresolvedNames.push(r.food_name);
+      continue;
+    }
+    if (r.food_source === "ai-estimate" && !aiNames.includes(r.food_name)) aiNames.push(r.food_name);
   }
 
-  return { total, split: macroSplit(total), bySlot, count: rows.length, unresolvedNames };
+  return { total, split: macroSplit(total), bySlot, count: rows.length, unresolvedNames, aiNames };
 }
 
 // ── การแสดงผลวันที่ (Asia/Bangkok, ปี พ.ศ.) ────────────────────────────────────

@@ -33,6 +33,14 @@ interface LineWebhookBody {
 }
 
 // Single 200 response used for every outcome (LINE requires 200; details go to logs).
+/**
+ * AI mode ของโมดูลบันทึกอาหาร (lib/modules/meal-tracker/ai-food.ts) ยิง Gemini ตอนเจออาหาร
+ * นอกฐาน ซึ่งใช้เวลา 2–10 วินาที และการตอบ LINE เกิดหลังจากนั้นในคำขอเดียวกัน — ค่า default
+ * ของ Vercel (10–15s) จึงเสี่ยงถูกตัดกลางคัน. ตั้ง 30s ให้มีที่หายใจ (ตัว Gemini เองมี timeout
+ * 9s ต่อครั้ง + จำกัด 3 รายการ/ข้อความ ยิงขนาน ดังนั้นเพดานจริงอยู่ราว 10–12s).
+ */
+export const maxDuration = 30;
+
 const OK = () => NextResponse.json({ ok: true }, { status: 200 });
 
 /**

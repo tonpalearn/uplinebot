@@ -236,8 +236,8 @@ function row(over: Partial<MealEntryRow>): MealEntryRow {
   return {
     id: "e", target_id: "t", line_user_id: "u", occurred_on: "2026-08-03", meal_slot: "breakfast",
     food_id: "f", food_name: "ข้าวสวย", qty: 1, qty_unit: "unit", grams: 100,
-    kcal: 100, carb_g: 20, protein_g: 5, fat_g: 0, resolved: true, raw_text: null,
-    created_at: "2026-08-03T01:00:00Z", ...over,
+    kcal: 100, carb_g: 20, protein_g: 5, fat_g: 0, resolved: true, food_source: "seed-approx",
+    raw_text: null, created_at: "2026-08-03T01:00:00Z", ...over,
   };
 }
 

@@ -155,6 +155,30 @@ function stackedBar(split: MacroSplit): Record<string, unknown> {
   };
 }
 
+/** ชื่ออาหารในชุดนี้ที่ตัวเลข "มาจาก AI ประเมิน" (ไม่ซ้ำ) */
+export function aiEstimatedNames(rows: MealEntryRow[]): string[] {
+  return Array.from(new Set(rows.filter((r) => r.food_source === "ai-estimate").map((r) => r.food_name)));
+}
+
+/**
+ * บรรทัดบอกที่มาเมื่อมีตัวเลขจาก AI — **ต้องขึ้นเสมอ** เมื่อเกิดขึ้น.
+ * เหตุผล: บนการ์ด ผู้ใช้แยกไม่ออกเลยว่าเลขไหนมาจากฐานที่คนตรวจแล้ว เลขไหน AI เดาให้ —
+ * ถ้าไม่ติดป้าย เท่ากับยกระดับ "ค่าประมาณของ AI" ขึ้นเป็น "ข้อเท็จจริง" โดยไม่ได้ตั้งใจ.
+ */
+function aiNotice(names: string[]): Record<string, unknown>[] {
+  if (names.length === 0) return [];
+  return [
+    {
+      type: "text",
+      text: `🤖 ${names.join(", ")} — ไม่มีในฐาน AI ประเมินค่าให้และจำไว้แล้ว (เป็นค่าประมาณ) แก้ได้ด้วย\nสอนอาหาร ${names[0]} = C.. P.. F..`,
+      size: FS.meta,
+      color: "#1D4ED8",
+      wrap: true,
+      margin: "lg",
+    },
+  ];
+}
+
 /** บรรทัดเตือนอาหารที่ยังไม่รู้จัก — ต้องมีเสมอเมื่อเกิดขึ้น ไม่งั้นยอดรวมจะต่ำกว่าจริงแบบเงียบ ๆ */
 function unknownNotice(names: string[]): Record<string, unknown>[] {
   if (names.length === 0) return [];
@@ -209,7 +233,7 @@ export function buildMealCard(opts: MealCardOpts): OutboundMessage {
           contents: [
             {
               type: "text",
-              text: row.food_name,
+              text: row.food_source === "ai-estimate" ? `🤖 ${row.food_name}` : row.food_name,
               size: FS.body,
               color: row.resolved ? NEUTRAL.text : NEUTRAL.muted,
               weight: "bold",
@@ -271,6 +295,7 @@ export function buildMealCard(opts: MealCardOpts): OutboundMessage {
       margin: "lg",
     },
     ...itemRows,
+    ...aiNotice(aiEstimatedNames(rows)),
     ...unknownNotice(unresolvedNames),
   ];
 
@@ -392,6 +417,7 @@ export function buildDayCard(summary: DaySummary, occurredOn: string): OutboundM
       margin: "lg",
     },
     ...summary.bySlot.map((s) => slotRow(s.slot, s.macros, s.split, s.count)),
+    ...aiNotice(summary.aiNames),
     ...unknownNotice(summary.unresolvedNames),
   ];
 
