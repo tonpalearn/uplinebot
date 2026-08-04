@@ -286,6 +286,8 @@ export default function MealPage({ params }: { params: { token: string } }) {
                           entry={e}
                           no={no}
                           busy={busy === e.id}
+                          token={token}
+                          flash={flash}
                           onSave={(patch) => mutate("PATCH", { id: e.id, ...patch }, "✅ แก้แล้ว")}
                           onDelete={() =>
                             mutate("DELETE", { id: e.id, occurredOn: date }, "🗑️ ลบแล้ว — กดกู้คืนได้")
@@ -644,16 +646,21 @@ function EntryRow({
   entry,
   no,
   busy,
+  token,
+  flash,
   onSave,
   onDelete,
 }: {
   entry: Entry;
   no: number;
   busy: boolean;
+  token: string;
+  flash: (m: string) => void;
   onSave: (patch: Record<string, unknown>) => void;
   onDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [asking, setAsking] = useState(false);
   const [name, setName] = useState(entry.food_name);
   const [qty, setQty] = useState(String(entry.qty));
   const [unit, setUnit] = useState<Entry["qty_unit"]>(entry.qty_unit);
@@ -674,6 +681,38 @@ function EntryRow({
     slot !== entry.meal_slot;
 
   const qtyLabel = entry.qty_unit === "g" ? `${g(entry.qty)} g` : `${g(entry.qty)} หน่วย`;
+
+  /**
+   * ให้ AI ประเมินอาหารชื่อนี้แล้วเก็บเข้าฐาน จากนั้นสั่งบันทึกรายการซ้ำเพื่อให้จับคู่ใหม่
+   * — เส้นทางแก้ของรายการที่ยังขึ้นว่า "ยังไม่รู้จัก" (มาโคร 0) ให้มีตัวเลขได้ในคลิกเดียว
+   */
+  const askAi = async () => {
+    setAsking(true);
+    try {
+      const res = await fetch(`/api/meal/${token}/foods`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim(), learn: true }),
+      });
+      const d = await res.json();
+      if (!res.ok || !d.ok) {
+        throw new Error(
+          d.reason === "ai_rejected"
+            ? "AI ไม่มั่นใจกับรายการนี้ — ลองใส่ชื่อให้เจาะจงขึ้น แล้วกดใหม่"
+            : d.reason === "ai_disabled"
+              ? "ยังไม่ได้เปิดใช้ AI"
+              : (d.reason ?? `HTTP ${res.status}`)
+        );
+      }
+      flash(`🤖 AI เพิ่ม ${d.food.name} เข้าฐานแล้ว (${kcal(d.food.kcal)} kcal) — กำลังคิดใหม่ให้`);
+      // PATCH ด้วยค่าปัจจุบัน → updateMealEntry จับคู่ฐานใหม่แล้วคำนวณมาโครให้เอง
+      onSave({ foodName: name.trim(), qty: Number(qty), qtyUnit: unit, mealSlot: slot });
+    } catch (e) {
+      flash(`❌ ${e instanceof Error ? e.message : "ประเมินไม่สำเร็จ"}`);
+    } finally {
+      setAsking(false);
+    }
+  };
 
   return (
     <div style={sx.entry}>
@@ -732,6 +771,18 @@ function EntryRow({
               </select>
             </label>
           </div>
+          <button
+            style={{ ...sx.aiCalcBtn, opacity: asking || busy || !name.trim() ? 0.55 : 1 }}
+            disabled={asking || busy || !name.trim()}
+            onClick={() => void askAi()}
+          >
+            {asking
+              ? "🤖 กำลังคำนวณ… (2–10 วิ)"
+              : entry.resolved
+                ? "🤖 ให้ AI คำนวณสารอาหารของอาหารนี้ใหม่"
+                : "🤖 ให้ AI ประเมินอาหารนี้ (ตอนนี้ยังไม่มีตัวเลข)"}
+          </button>
+
           <div style={sx.editActions}>
             <button
               style={{ ...sx.saveBtn, opacity: dirty && !busy ? 1 : 0.45 }}
@@ -985,9 +1036,57 @@ function FoodEditForm({
   const [unitGrams, setUnitGrams] = useState(food.unit_grams === null ? "" : String(food.unit_grams));
   const [aliases, setAliases] = useState(food.aliases ?? "");
   const [saving, setSaving] = useState(false);
+  const [asking, setAsking] = useState(false);
+  /** ค่าที่ AI เพิ่งเติมให้ (ยังไม่บันทึก) — ใช้ขึ้นแถบเตือนให้ตรวจก่อนกดบันทึก */
+  const [aiFilled, setAiFilled] = useState<{ conf: number } | null>(null);
 
   // แสดงพลังงานที่จะได้ทันทีระหว่างพิมพ์ — ผู้ใช้เห็นผลก่อนกดบันทึก ไม่ต้องเดา
   const previewKcal = Math.round(Number(c || 0) * 4 + Number(pr || 0) * 4 + Number(f || 0) * 9);
+
+  /**
+   * ให้ AI คำนวณค่าสารอาหารใหม่จาก "ชื่อ + ปริมาณที่กรอกอยู่ในฟอร์ม" แล้ว **เติมลงช่อง**
+   * โดยยังไม่บันทึก — ผู้ใช้ต้องเห็นตัวเลขและกดบันทึกเองเสมอ (ค่าจาก AI เป็นค่าประมาณ
+   * ถ้าเขียนทับให้เงียบ ๆ เท่ากับยัดค่าเดาทับค่าที่เจ้าของตั้งใจตั้งไว้)
+   */
+  const askAi = async () => {
+    setAsking(true);
+    try {
+      const portion =
+        basis === "per_100g"
+          ? "ต่อ 100 กรัม"
+          : `ต่อ 1 ${unitLabel.trim() || "ที่"}${unitGrams ? ` (หนัก ${unitGrams} กรัม)` : ""}`;
+
+      const res = await fetch(`/api/meal/${token}/foods`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim(), portion, estimateOnly: true }),
+      });
+      const d = await res.json();
+      if (!res.ok || !d.ok) {
+        throw new Error(
+          d.reason === "ai_rejected"
+            ? "AI ไม่มั่นใจกับรายการนี้ — ลองใส่ชื่อให้เจาะจงขึ้น หรือกรอกค่าเอง"
+            : d.reason === "ai_disabled"
+              ? "ยังไม่ได้เปิดใช้ AI"
+              : (d.reason ?? `HTTP ${res.status}`)
+        );
+      }
+
+      const e = d.estimate;
+      setC(String(e.carbG));
+      setPr(String(e.proteinG));
+      setF(String(e.fatG));
+      setBasis(e.basis);
+      if (e.unitLabel) setUnitLabel(e.unitLabel);
+      if (e.unitGrams !== null && e.unitGrams !== undefined) setUnitGrams(String(e.unitGrams));
+      setAiFilled({ conf: e.confidence });
+      flash(`🤖 AI คำนวณให้แล้ว ${kcal(e.kcal)} kcal — ตรวจแล้วกดบันทึก`);
+    } catch (err) {
+      flash(`❌ ${err instanceof Error ? err.message : "คำนวณไม่สำเร็จ"}`);
+    } finally {
+      setAsking(false);
+    }
+  };
 
   const save = async () => {
     setSaving(true);
@@ -1119,6 +1218,21 @@ function FoodEditForm({
         <span style={sx.fieldLabel}>คำเรียกอื่น (ไม่บังคับ — คั่นด้วยเว้นวรรค)</span>
         <input style={sx.input} value={aliases} onChange={(e) => setAliases(e.target.value)} />
       </label>
+
+      <button
+        style={{ ...sx.aiCalcBtn, opacity: asking || !name.trim() ? 0.55 : 1 }}
+        disabled={asking || !name.trim()}
+        onClick={() => void askAi()}
+      >
+        {asking ? "🤖 กำลังคำนวณ… (2–10 วิ)" : "🤖 ให้ AI คำนวณสารอาหารใหม่จากชื่อ + ปริมาณนี้"}
+      </button>
+
+      {aiFilled && (
+        <div style={sx.aiFilledNote}>
+          AI เติมค่าให้แล้ว (ความมั่นใจ {Math.round(aiFilled.conf * 100)}%) — <b>ยังไม่บันทึก</b>{" "}
+          ตรวจตัวเลขแล้วกดบันทึกด้านล่าง หรือแก้ทับได้เลย
+        </div>
+      )}
 
       <div style={sx.previewBox}>
         พลังงานที่จะได้ = <b>{kcal(previewKcal)} kcal</b>{" "}
@@ -1592,6 +1706,26 @@ const sx: Record<string, React.CSSProperties> = {
     cursor: "pointer",
   },
   modeTabOn: { background: T.accentWeak, color: T.accent, borderColor: T.accent, fontWeight: 700 },
+  aiCalcBtn: {
+    padding: "11px 14px",
+    borderRadius: T.radiusSm,
+    border: `1px solid ${T.primary}`,
+    background: T.primaryWeak,
+    color: T.primary,
+    fontWeight: 700,
+    fontSize: 14.5,
+    cursor: "pointer",
+    textAlign: "center",
+    lineHeight: 1.6,
+  },
+  aiFilledNote: {
+    padding: "10px 12px",
+    borderRadius: T.radiusSm,
+    background: T.primaryWeak,
+    color: T.fg,
+    fontSize: 13,
+    lineHeight: 1.7,
+  },
   previewBox: {
     padding: "10px 12px",
     borderRadius: T.radiusSm,

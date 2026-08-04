@@ -159,16 +159,24 @@ export function validateEstimate(raw: unknown): AiFoodEstimate | null {
 /**
  * ถาม AI ว่าอาหารชื่อนี้มีสารอาหารเท่าไร — คืน null ถ้าไม่มีคีย์ / เรียกไม่สำเร็จ / ค่าไม่ผ่านด่านตรวจ.
  * ไม่ throw เด็ดขาด (อยู่บนเส้นทางตอบแชท).
+ *
+ * `portionHint` = คำอธิบายปริมาณที่ผู้ใช้ระบุเอง เช่น "1 จาน 350 กรัม" หรือ "ต่อ 100 กรัม".
+ * มีไว้สำหรับหน้าเว็บที่ผู้ใช้กรอกหน่วย/น้ำหนักไว้แล้วแล้วกดให้ AI คำนวณใหม่ — บอกปริมาณไป
+ * ด้วยจะได้ค่าตรงกับที่ผู้ใช้ตั้งใจ ไม่ใช่ให้โมเดลเดาขนาดเสิร์ฟเองแล้วไปคนละทางกับฟอร์ม
  */
-export async function estimateFoodMacros(name: string): Promise<AiFoodEstimate | null> {
+export async function estimateFoodMacros(
+  name: string,
+  portionHint?: string | null
+): Promise<AiFoodEstimate | null> {
   const q = (name ?? "").trim();
   if (!q || q.length > 60 || !isGeminiEnabled()) return null;
 
-  const raw = await generateJson<RawEstimate>({
-    system: SYSTEM,
-    prompt: `ประเมินค่าสารอาหารของ: "${q}"`,
-    schema: SCHEMA,
-  });
+  const hint = (portionHint ?? "").trim().slice(0, 80);
+  const prompt = hint
+    ? `ประเมินค่าสารอาหารของ: "${q}"\nผู้ใช้ระบุปริมาณไว้ว่า: "${hint}" — ให้ตอบค่าโดยยึดปริมาณนี้ (ตั้ง basis/unit_label/unit_grams ให้ตรงกับที่ระบุ)`
+    : `ประเมินค่าสารอาหารของ: "${q}"`;
+
+  const raw = await generateJson<RawEstimate>({ system: SYSTEM, prompt, schema: SCHEMA });
 
   return validateEstimate(raw);
 }

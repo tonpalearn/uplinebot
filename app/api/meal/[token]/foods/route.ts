@@ -16,6 +16,7 @@ import { isGeminiEnabled } from "@/lib/ai/gemini";
  *   GET    ?q=            → ลิสต์/ค้นอาหารที่ธุรกิจนี้เห็น (ของตัวเอง + ฐานกลาง)
  *   POST   {name, carbG, proteinG, fatG, ...}  → สอน/แก้เอง (source='chat')
  *   POST   {name, learn:true}                  → **สั่ง AI เรียนรู้** (source='ai-estimate')
+ *   POST   {name, portion?, estimateOnly:true}  → ให้ AI คำนวณให้ดู **ไม่บันทึก** (ปุ่มในฟอร์มแก้ไข)
  *   PATCH  {id, ...}      → แก้ค่าอาหารของ tenant + คำนวณไดอารี่ย้อน 7 วันใหม่ให้
  *   DELETE {id}           → ลบอาหารของ tenant (ฐานกลางลบไม่ได้)
  *
@@ -91,6 +92,40 @@ export async function POST(req: NextRequest, ctx: RouteCtx): Promise<NextRespons
   if (!name) return NextResponse.json({ ok: false, reason: "name is required" }, { status: 400 });
   if (name.length > 60) {
     return NextResponse.json({ ok: false, reason: "name too long" }, { status: 400 });
+  }
+
+  // ── โหมด "ให้ AI คำนวณให้ดูก่อน": ประเมินอย่างเดียว **ไม่บันทึก** ────────────────
+  // ใช้จากปุ่มในฟอร์มแก้ไข — ผู้ใช้ต้องได้เห็นตัวเลขและกดยืนยันเองก่อนเสมอ ไม่ใช่ให้ AI
+  // เขียนทับค่าที่เขาตั้งไว้เงียบ ๆ (ค่าจาก AI เป็นค่าประมาณ คนต้องเป็นคนเคาะ)
+  if (body.estimateOnly === true) {
+    if (!isGeminiEnabled()) {
+      return NextResponse.json({ ok: false, reason: "ai_disabled" }, { status: 503 });
+    }
+    const hint = typeof body.portion === "string" ? body.portion : null;
+    try {
+      const est = await estimateFoodMacros(name, hint);
+      if (!est) return NextResponse.json({ ok: false, reason: "ai_rejected" }, { status: 422 });
+      return NextResponse.json({
+        ok: true,
+        estimate: {
+          name: est.name,
+          basis: est.basis,
+          unitLabel: est.unitLabel,
+          unitGrams: est.unitGrams,
+          carbG: est.carbG,
+          proteinG: est.proteinG,
+          fatG: est.fatG,
+          // คิดจากมาโครด้วย Atwater เหมือนตอนบันทึกจริง เพื่อให้เลขที่พรีวิว = เลขที่จะได้
+          kcal: Math.round(est.carbG * 4 + est.proteinG * 4 + est.fatG * 9),
+          confidence: est.confidence,
+        },
+      });
+    } catch (err) {
+      return NextResponse.json(
+        { ok: false, reason: err instanceof Error ? err.message : "estimate_failed" },
+        { status: 500 }
+      );
+    }
   }
 
   // ── โหมด "สั่งเรียนรู้": ให้ AI ประเมินค่าให้แล้วเก็บเข้าฐานของ tenant ─────────────
