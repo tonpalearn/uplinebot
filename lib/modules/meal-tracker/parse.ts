@@ -51,7 +51,16 @@ export type MealIntent =
       unitGrams: number | null;
     }
   | { action: "lookup"; name: string }
+  /** ลบล่าสุด 1 รายการ (ไม่มีอาร์กิวเมนต์) */
   | { action: "undo" }
+  /** ลบรายการตามเลขที่เห็นบนการ์ดรายละเอียด เช่น "ลบกิน 3" หรือ "ลบกิน 2,3" */
+  | { action: "delete_items"; occurredOn: string; indexes: number[] }
+  /** ลบทั้งวัน หรือทั้งมื้อ เช่น "ลบกินทั้งวัน" / "ลบกิน เช้า" */
+  | { action: "delete_day"; occurredOn: string; slot: MealSlot | null }
+  /** กู้คืนการลบครั้งล่าสุด */
+  | { action: "restore" }
+  /** รายละเอียดรายมื้อ: กินอะไรไปบ้าง */
+  | { action: "day_detail"; occurredOn: string }
   | { action: "help" }
   | null;
 
@@ -407,8 +416,16 @@ const CMD_DAY = /^(?:สรุปกิน|สรุปอาหาร|กิน
 const CMD_TEACH = /^(?:สอนอาหาร|เพิ่มอาหาร|จำอาหาร)\s+([\s\S]+)$/i;
 /** ดูค่าอาหารหนึ่งอย่าง */
 const CMD_LOOKUP = /^(?:อาหาร|ดูอาหาร|ค่าอาหาร|แคล|kcal)\s+(.+)$/i;
-/** ลบรายการล่าสุด */
+/** ลบรายการล่าสุด (ไม่มีอะไรต่อท้าย) */
 const CMD_UNDO = /^(?:ลบกิน|ยกเลิกกิน|ลบอาหาร|undo\s*กิน)$/i;
+/** ลบแบบระบุ: "ลบกิน 3" · "ลบกิน 2,3" · "ลบกิน เช้า" · "ลบกินทั้งวัน" · "ลบกินวันนี้" */
+const CMD_DELETE = /^(?:ลบกิน|ยกเลิกกิน|ลบอาหาร|ลบมื้อ)\s*(.+)$/i;
+/** กู้คืนการลบครั้งล่าสุด */
+const CMD_RESTORE = /^(?:กู้กิน|เลิกลบกิน|ยกเลิกลบกิน|คืนกิน|กู้คืนกิน)(?:\s+(.*))?$/i;
+/** รายละเอียดรายมื้อ — กินอะไรไปบ้าง (ไม่ใช่แค่ยอดรวม) */
+const CMD_DETAIL = /^(?:รายละเอียดกิน|รายการกิน|กินอะไรบ้าง|กินอะไรไปบ้าง|ดูรายการกิน|รายละเอียดมื้อ)(?:\s+(.*))?$/i;
+/** "ทั้งวัน"/"วันนี้"/"หมด" ในบริบทคำสั่งลบ = ลบทุกรายการของวันนั้น */
+const DELETE_ALL_RE = /^(?:ทั้งวัน|ทั้งหมด|หมด|วันนี้|all)$/i;
 /** วิธีใช้ */
 const CMD_HELP = /^(?:วิธีกิน|ช่วยกิน|help\s*กิน|กินยังไง)$/i;
 
@@ -485,7 +502,42 @@ export function parseMealIntent(text: string, now: Date): MealIntent {
   const today = bkkToday(now);
 
   if (CMD_HELP.test(firstLine)) return { action: "help" };
+  // ต้องเช็ค UNDO (ไม่มีอาร์กิวเมนต์) ก่อน DELETE (มีอาร์กิวเมนต์) — สองตัวนี้ใช้คำนำหน้าเดียวกัน
   if (CMD_UNDO.test(firstLine)) return { action: "undo" };
+
+  const restoreMatch = firstLine.match(CMD_RESTORE);
+  if (restoreMatch) return { action: "restore" };
+
+  const detailMatch = firstLine.match(CMD_DETAIL);
+  if (detailMatch) {
+    const { ymd } = extractDate(detailMatch[1] ?? "", today);
+    return { action: "day_detail", occurredOn: ymdKey(ymd) };
+  }
+
+  const deleteMatch = firstLine.match(CMD_DELETE);
+  if (deleteMatch) {
+    const arg = deleteMatch[1].trim();
+
+    // วันที่ (ถ้ามี) ถูกดึงออกก่อน เพื่อให้ "ลบกิน เช้า เมื่อวาน" ทำงานได้
+    const { ymd, rest } = extractDate(arg, today);
+    const occurredOn = ymdKey(ymd);
+    const body = rest.trim();
+
+    // "ลบกิน 3" / "ลบกิน 2,3" / "ลบกิน 2 3"
+    const nums = body.match(/\d+/g);
+    if (nums && /^[\d\s,،และ]+$/.test(body)) {
+      const indexes = Array.from(new Set(nums.map(Number).filter((n) => n >= 1)));
+      if (indexes.length > 0) return { action: "delete_items", occurredOn, indexes };
+    }
+
+    // "ลบกิน เช้า" → ทั้งมื้อ · "ลบกินทั้งวัน" → ทั้งวัน
+    const { slot, rest: afterSlot } = extractSlot(body);
+    if (slot && afterSlot.trim() === "") return { action: "delete_day", occurredOn, slot };
+    if (DELETE_ALL_RE.test(body)) return { action: "delete_day", occurredOn, slot: null };
+    if (body === "") return { action: "delete_day", occurredOn, slot: null };
+
+    return { action: "help" };
+  }
 
   const teachMatch = firstLine.match(CMD_TEACH);
   if (teachMatch) return parseTeach(teachMatch[1]) ?? { action: "help" };

@@ -305,6 +305,92 @@ export async function deleteLastMeal(targetId: string, lineUserId: string | null
   return row;
 }
 
+/**
+ * soft-delete รายการที่เจาะจงของวันนั้น — `indexes` คือ "เลขที่เห็นบนการ์ด" (เริ่มที่ 1)
+ * เรียงตามเวลาที่บันทึกของวันนั้น. คืนแถวที่ลบจริง (เลขที่ไม่มีอยู่จะถูกข้ามเงียบ ๆ).
+ *
+ * ทุกแถวใน 1 คำสั่งใช้ `deleted_at` **ค่าเดียวกัน** เพื่อให้ restoreLastDelete() รู้ว่า
+ * "ครั้งล่าสุด" ลบอะไรไปบ้าง แล้วกู้คืนได้ทั้งชุด — นี่คือเหตุผลที่ลบทั้งมื้อ/ทั้งวันได้เลย
+ * โดยไม่ต้องถามยืนยันให้รำคาญ: กดพลาดก็พิมพ์ "กู้กิน" คืนได้ทันที
+ */
+export async function deleteMealsByIndex(
+  targetId: string,
+  lineUserId: string | null,
+  occurredOn: string,
+  indexes: number[]
+): Promise<MealEntryRow[]> {
+  const rows = await getDayEntries(targetId, lineUserId, occurredOn);
+  const picked = indexes
+    .map((i) => rows[i - 1])
+    .filter((r): r is MealEntryRow => r !== undefined);
+  return softDeleteRows(picked);
+}
+
+/** soft-delete ทุกรายการของวันนั้น (ระบุ slot = เฉพาะมื้อนั้น) */
+export async function deleteMealsByDay(
+  targetId: string,
+  lineUserId: string | null,
+  occurredOn: string,
+  slot?: MealSlot
+): Promise<MealEntryRow[]> {
+  const rows = await getDayEntries(targetId, lineUserId, occurredOn);
+  return softDeleteRows(slot ? rows.filter((r) => r.meal_slot === slot) : rows);
+}
+
+/** ตีตราลบให้ทุกแถวที่ส่งมาด้วย timestamp เดียวกัน (= 1 ชุดการลบ) */
+async function softDeleteRows(rows: MealEntryRow[]): Promise<MealEntryRow[]> {
+  if (rows.length === 0) return [];
+  const supabase = getServiceClient();
+  const stamp = new Date().toISOString();
+
+  const { error } = await supabase
+    .from("upl_meal_entries")
+    .update({ deleted_at: stamp })
+    .in("id", rows.map((r) => r.id));
+
+  if (error) throw new Error(`Failed to delete meal entries: ${error.message}`);
+  return rows;
+}
+
+/**
+ * กู้คืนการลบครั้งล่าสุดของคนนั้นในแชทนั้น — คืนทั้งชุดที่ลบพร้อมกัน (deleted_at ตรงกัน).
+ * มองย้อนแค่ 24 ชม. เพื่อไม่ให้ "กู้กิน" ไปปลุกของที่ลบทิ้งไว้เมื่อสัปดาห์ก่อนโดยไม่ตั้งใจ.
+ */
+export async function restoreLastDelete(
+  targetId: string,
+  lineUserId: string | null
+): Promise<MealEntryRow[]> {
+  const supabase = getServiceClient();
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+  let query = supabase
+    .from("upl_meal_entries")
+    .select(ENTRY_COLUMNS + ", deleted_at")
+    .eq("target_id", targetId)
+    .not("deleted_at", "is", null)
+    .gte("deleted_at", since);
+
+  if (lineUserId) query = query.eq("line_user_id", lineUserId);
+
+  const { data, error } = await query.order("deleted_at", { ascending: false });
+  if (error) throw new Error(`Failed to find deleted meals for target ${targetId}: ${error.message}`);
+
+  const all = (data ?? []) as unknown as (MealEntryRow & { deleted_at: string })[];
+  if (all.length === 0) return [];
+
+  // ทุกแถวที่ถูกลบ "พร้อมกัน" มี deleted_at เท่ากันเป๊ะ — กู้ทั้งชุดนั้น
+  const latest = all[0].deleted_at;
+  const batch = all.filter((r) => r.deleted_at === latest);
+
+  const { error: upErr } = await supabase
+    .from("upl_meal_entries")
+    .update({ deleted_at: null })
+    .in("id", batch.map((r) => r.id));
+
+  if (upErr) throw new Error(`Failed to restore meal entries: ${upErr.message}`);
+  return batch;
+}
+
 export interface TeachFoodInput {
   name: string;
   carbG: number;

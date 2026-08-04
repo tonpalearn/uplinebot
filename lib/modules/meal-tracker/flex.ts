@@ -61,6 +61,7 @@ export function mealQuickReply(): { items: QuickReplyItem[] } {
   return {
     items: [
       { type: "action", action: { type: "message", label: "📊 สรุปวันนี้", text: "สรุปกิน" } },
+      { type: "action", action: { type: "message", label: "🍽️ รายละเอียด", text: "รายละเอียดกิน" } },
       { type: "action", action: { type: "message", label: "🌅 เช้า", text: "กิน เช้า " } },
       { type: "action", action: { type: "message", label: "☀️ กลางวัน", text: "กิน กลางวัน " } },
       { type: "action", action: { type: "message", label: "🌙 เย็น", text: "กิน เย็น " } },
@@ -513,9 +514,16 @@ export function buildHelpText(): OutboundMessage {
       "• ไม่ใส่มื้อ/วันที่ = ใช้ของวันนี้และเดามื้อจากเวลา",
       "• ปริมาณพิมพ์ได้ทั้ง 100g · 2 ขีด · 1 ทัพพี · 2 ฟอง · ครึ่งจาน",
       "• สรุปกิน = สรุปทั้งวัน (ใส่วันที่ต่อท้ายเพื่อดูย้อนหลัง)",
+      "• รายละเอียดกิน = ดูว่าแต่ละมื้อกินอะไรไปบ้าง",
       "• สอนอาหาร ข้าวมันไก่ = C78 P28 F22 ต่อจาน",
       "• อาหาร ข้าวสวย = ดูค่าสารอาหาร",
+      "",
+      "ลบรายการ:",
       "• ลบกิน = ลบรายการล่าสุด",
+      "• ลบกิน 3 = ลบรายการที่ 3 (เลขจากรายละเอียดกิน)",
+      "• ลบกิน เช้า = ลบทั้งมื้อเช้า",
+      "• ลบกินทั้งวัน = ลบทุกรายการของวันนี้",
+      "• กู้กิน = เอาที่เพิ่งลบกลับคืน (ภายใน 24 ชม.)",
     ].join("\n"),
     quickReply: mealQuickReply(),
   };
@@ -531,6 +539,214 @@ export function buildEmptyRecordText(): OutboundMessage {
 }
 
 /** ยืนยันการลบรายการล่าสุด */
+// ── การ์ดรายละเอียดรายมื้อ ───────────────────────────────────────────────────────
+/**
+ * "วันนี้กินอะไรไปบ้าง" — ลิสต์ทุกรายการที่พิมพ์ แยกตามมื้อ พร้อม **เลขกำกับ**.
+ *
+ * เลขนับต่อเนื่องทั้งวัน (ไม่รีเซ็ตรายมื้อ) และเรียงตามเวลาที่บันทึก — ตัวเดียวกับที่
+ * `ลบกิน <เลข>` ใช้อ้างอิง จึงต้องตรงกับลำดับใน getDayEntries() เสมอ ไม่งั้นผู้ใช้จะลบผิดรายการ.
+ *
+ * ต่างจาก buildDayCard ตรงที่การ์ดนี้ตอบคำถาม "กินอะไร" (ส่วนประกอบ) ส่วนการ์ดสรุปตอบ
+ * "ได้สารอาหารเท่าไร" (ตัวเลข) — เลยไม่มีโดนัทในนี้ ให้ที่ว่างกับรายการแทน.
+ */
+export function buildDayDetailCard(rows: MealEntryRow[], occurredOn: string): OutboundMessage {
+  if (rows.length === 0) {
+    return {
+      type: "text",
+      text: `ยังไม่มีบันทึกอาหารของ ${formatThaiDate(occurredOn)}\n\nพิมพ์แบบนี้ได้เลย:\nกิน เช้า\nข้าวสวย 100g\nไข่ต้ม 2 ฟอง`,
+      quickReply: mealQuickReply(),
+    };
+  }
+
+  const total = rows.reduce(
+    (a, r) => ({
+      kcal: a.kcal + Number(r.kcal),
+      carbG: a.carbG + Number(r.carb_g),
+      proteinG: a.proteinG + Number(r.protein_g),
+      fatG: a.fatG + Number(r.fat_g),
+    }),
+    { kcal: 0, carbG: 0, proteinG: 0, fatG: 0 }
+  );
+
+  const body: Record<string, unknown>[] = [];
+  const order: MealSlot[] = ["breakfast", "lunch", "dinner", "snack"];
+
+  // เลขกำกับต้องนับจากลำดับ "ทั้งวัน" ตามเวลาบันทึก — map ไว้ก่อนแล้วค่อยแยกมื้อ
+  const numbered = rows.map((row, i) => ({ row, no: i + 1 }));
+
+  for (const slot of order) {
+    const inSlot = numbered.filter((n) => n.row.meal_slot === slot);
+    if (inSlot.length === 0) continue;
+
+    const slotKcal = inSlot.reduce((a, n) => a + Number(n.row.kcal), 0);
+
+    body.push({
+      type: "box",
+      layout: "horizontal",
+      margin: body.length === 0 ? "none" : "xl",
+      contents: [
+        {
+          type: "text",
+          text: `${SLOT_EMOJI[slot]} ${SLOT_LABEL[slot]}`,
+          size: FS.section,
+          weight: "bold",
+          color: NEUTRAL.text,
+          flex: 5,
+        },
+        {
+          type: "text",
+          text: `${formatKcal(slotKcal)} kcal`,
+          size: FS.label,
+          color: NEUTRAL.muted,
+          align: "end",
+          flex: 4,
+        },
+      ],
+    });
+
+    for (const { row, no } of inSlot) {
+      const m = rowMacros(row);
+      body.push({
+        type: "box",
+        layout: "horizontal",
+        margin: "md",
+        spacing: "sm",
+        contents: [
+          // เลขนี้คือสิ่งที่พิมพ์ต่อท้าย "ลบกิน" ได้เลย
+          {
+            type: "text",
+            text: `${no}.`,
+            size: FS.meta,
+            color: NEUTRAL.muted,
+            flex: 1,
+          },
+          {
+            type: "box",
+            layout: "vertical",
+            flex: 12,
+            contents: [
+              {
+                type: "text",
+                text: `${row.food_source === "ai-estimate" ? "🤖 " : ""}${row.food_name}${
+                  row.resolved ? "" : " (ยังไม่รู้จัก)"
+                }`,
+                size: FS.body,
+                weight: "bold",
+                color: row.resolved ? NEUTRAL.text : NEUTRAL.muted,
+                wrap: true,
+              },
+              {
+                type: "text",
+                text: `${formatQty(row)}${
+                  row.grams === null ? "" : ` ≈ ${formatGrams(Number(row.grams))} g`
+                }  ·  C ${formatGrams(m.carbG)} · P ${formatGrams(m.proteinG)} · F ${formatGrams(m.fatG)}`,
+                size: FS.meta,
+                color: NEUTRAL.muted,
+                wrap: true,
+              },
+            ],
+          },
+          {
+            type: "text",
+            text: `${formatKcal(m.kcal)}`,
+            size: FS.label,
+            color: NEUTRAL.text,
+            weight: "bold",
+            align: "end",
+            flex: 4,
+          },
+        ],
+      });
+    }
+  }
+
+  body.push(softSep("xl"));
+  body.push({
+    type: "text",
+    text: "ลบรายการไหน พิมพ์เลขต่อท้ายได้เลย เช่น  ลบกิน 2\nลบทั้งมื้อ: ลบกิน เช้า  ·  ลบทั้งวัน: ลบกินทั้งวัน\nลบผิด? พิมพ์  กู้กิน  เอากลับคืนได้",
+    size: FS.meta,
+    color: NEUTRAL.muted,
+    wrap: true,
+    margin: "lg",
+  });
+
+  const bubble: Record<string, unknown> = {
+    type: "bubble",
+    header: gradientHeader({
+      accent: MEAL_ACCENT,
+      eyebrow: `🍽️ รายละเอียด · ${formatThaiDate(occurredOn)}`,
+      heroLabel: "รวมทั้งวัน",
+      hero: `${formatKcal(total.kcal)} kcal`,
+      subtitle: `${rows.length} รายการ  ·  C ${formatGrams(total.carbG)} · P ${formatGrams(
+        total.proteinG
+      )} · F ${formatGrams(total.fatG)} g`,
+    }),
+    body: {
+      type: "box",
+      layout: "vertical",
+      paddingAll: "20px",
+      paddingTop: "12px",
+      spacing: "none",
+      contents: body,
+    },
+    footer: {
+      type: "box",
+      layout: "vertical",
+      paddingAll: "16px",
+      spacing: "sm",
+      contents: [messageButton("📊 ดูสัดส่วนสารอาหาร", "สรุปกิน", MEAL_ACCENT.solid)],
+    },
+    styles: { header: headerStyle(MEAL_ACCENT), footer: footerStyle() },
+  };
+
+  return {
+    type: "flex",
+    altText: `รายละเอียดอาหาร ${formatThaiDate(occurredOn)} — ${rows.length} รายการ ${formatKcal(total.kcal)} kcal`,
+    contents: bubble,
+    quickReply: mealQuickReply(),
+  };
+}
+
+/** ยืนยันการลบหลายรายการ — บอกชัดว่าลบอะไรไป และเอากลับคืนยังไง */
+export function buildDeletedText(rows: MealEntryRow[], occurredOn: string): OutboundMessage {
+  if (rows.length === 0) {
+    return {
+      type: "text",
+      text: `ไม่มีรายการให้ลบใน ${formatThaiDate(occurredOn)}\n\nดูว่ามีอะไรบ้าง: รายละเอียดกิน`,
+      quickReply: mealQuickReply(),
+    };
+  }
+
+  const kcal = rows.reduce((a, r) => a + Number(r.kcal), 0);
+  const names = rows.map((r) => `• ${r.food_name} (${SLOT_LABEL[r.meal_slot]})`).join("\n");
+
+  return {
+    type: "text",
+    text: `🗑️ ลบแล้ว ${rows.length} รายการ · −${formatKcal(kcal)} kcal\n${names}\n\nลบผิด? พิมพ์  กู้กิน  เอากลับคืนได้ทั้งชุด`,
+    quickReply: mealQuickReply(),
+  };
+}
+
+/** ยืนยันการกู้คืน */
+export function buildRestoredText(rows: MealEntryRow[]): OutboundMessage {
+  if (rows.length === 0) {
+    return {
+      type: "text",
+      text: "ไม่มีรายการที่ลบไว้ให้กู้คืน (ย้อนได้เฉพาะที่ลบภายใน 24 ชม.)",
+      quickReply: mealQuickReply(),
+    };
+  }
+
+  const kcal = rows.reduce((a, r) => a + Number(r.kcal), 0);
+  const names = rows.map((r) => `• ${r.food_name} (${SLOT_LABEL[r.meal_slot]})`).join("\n");
+
+  return {
+    type: "text",
+    text: `♻️ กู้คืนแล้ว ${rows.length} รายการ · +${formatKcal(kcal)} kcal\n${names}`,
+    quickReply: mealQuickReply(),
+  };
+}
+
 export function buildUndoText(row: MealEntryRow): OutboundMessage {
   return {
     type: "text",

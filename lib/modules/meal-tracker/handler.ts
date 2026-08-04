@@ -5,6 +5,9 @@ import {
   addMealEntries,
   backfillUnresolved,
   deleteLastMeal,
+  deleteMealsByIndex,
+  deleteMealsByDay,
+  restoreLastDelete,
   findFood,
   getDayEntries,
   resolveLines,
@@ -20,6 +23,9 @@ import {
   buildMealCard,
   buildTaughtText,
   buildUndoText,
+  buildDayDetailCard,
+  buildDeletedText,
+  buildRestoredText,
   mealQuickReply,
 } from "./flex";
 
@@ -180,6 +186,36 @@ export const MealTrackerModule: ModuleHandler = {
               : null
           ),
         ];
+      }
+
+      case "day_detail": {
+        const rows = await getDayEntries(ctx.targetId, lineUserId, intent.occurredOn);
+        return [buildDayDetailCard(rows, intent.occurredOn)];
+      }
+
+      case "delete_items": {
+        const removed = await deleteMealsByIndex(
+          ctx.targetId,
+          lineUserId,
+          intent.occurredOn,
+          intent.indexes
+        );
+        return [buildDeletedText(removed, intent.occurredOn)];
+      }
+
+      case "delete_day": {
+        const removed = await deleteMealsByDay(
+          ctx.targetId,
+          lineUserId,
+          intent.occurredOn,
+          intent.slot ?? undefined
+        );
+        return [buildDeletedText(removed, intent.occurredOn)];
+      }
+
+      case "restore": {
+        const restored = await restoreLastDelete(ctx.targetId, lineUserId);
+        return [buildRestoredText(restored)];
       }
 
       case "undo": {
