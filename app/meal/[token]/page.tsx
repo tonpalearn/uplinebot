@@ -956,6 +956,8 @@ function FoodsTab({ token, flash }: { token: string; flash: (m: string) => void 
           )}
         </>
       )}
+
+      <BackupPanel token={token} flash={flash} onRestored={() => load(q)} />
     </>
   );
 }
@@ -966,6 +968,143 @@ function FoodsTab({ token, flash }: { token: string; flash: (m: string) => void 
  * ของ tenant → แก้ในที่ (PATCH) · ฐานกลาง → แก้ไม่ได้ แต่ "คัดลอกเป็นของฉันแล้วแก้" ได้
  * (POST ชื่อเดิม) เพราะอาหารของ tenant ชนะฐานกลางเสมอตอนจับคู่ (ดู meal_food_search)
  */
+/**
+ * สำรอง / กู้คืนฐานอาหาร.
+ *
+ * ฐานอาหารคือของที่ผู้ใช้ลงแรงสะสม (สอนเอง + แก้ค่าที่ AI เดาผิด) — ต่างจากไดอารี่ที่พิมพ์ใหม่ได้
+ * ถ้าหายคือเสียเวลาที่ซื้อคืนไม่ได้ จึงต้องมีทางเอาไฟล์ออกมาถือไว้เอง ไม่ใช่ฝากไว้กับระบบอย่างเดียว
+ */
+function BackupPanel({
+  token, flash, onRestored,
+}: {
+  token: string;
+  flash: (m: string) => void;
+  onRestored: () => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [shared, setShared] = useState(false);
+  const [mode, setMode] = useState<"skip" | "overwrite">("skip");
+  const [busy, setBusy] = useState(false);
+
+  const download = (format: "json" | "csv") => {
+    // เปิดตรง ๆ ให้เบราว์เซอร์จัดการดาวน์โหลดเอง (ปลายทางส่ง Content-Disposition มาแล้ว)
+    // — ไม่ต้อง fetch มาเก็บใน memory ซึ่งไม่ได้อะไรเพิ่มและกินแรมเปล่า
+    window.location.href = `/api/meal/${token}/backup?format=${format}${shared ? "&shared=1" : ""}`;
+  };
+
+  const restore = async (file: File) => {
+    setBusy(true);
+    try {
+      const text = await file.text();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        throw new Error("อ่านไฟล์ไม่ออก — ต้องเป็นไฟล์ .json ที่ดาวน์โหลดจากหน้านี้");
+      }
+
+      const foods = (parsed as { foods?: unknown })?.foods;
+      if (!Array.isArray(foods)) throw new Error("ไฟล์นี้ไม่ใช่ไฟล์สำรองฐานอาหาร");
+
+      const res = await fetch(`/api/meal/${token}/backup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ foods, mode }),
+      });
+      const d = await res.json();
+      if (!res.ok || !d.ok) throw new Error(d.reason ?? `HTTP ${res.status}`);
+
+      const parts = [`เพิ่ม ${d.added}`];
+      if (d.updated) parts.push(`ทับ ${d.updated}`);
+      if (d.skipped) parts.push(`ข้าม ${d.skipped}`);
+      if (d.rejected?.length) parts.push(`ไม่ผ่าน ${d.rejected.length}`);
+      flash(`♻️ กู้คืนแล้ว — ${parts.join(" · ")} รายการ`);
+
+      // แถวที่ไม่ผ่านต้องบอกว่าเพราะอะไร ไม่ใช่หายเงียบ ๆ
+      if (d.rejected?.length) {
+        const list = d.rejected
+          .slice(0, 3)
+          .map((r: { name: string; reason: string }) => `${r.name} (${r.reason})`)
+          .join(" · ");
+        setTimeout(() => flash(`⚠️ ไม่ผ่าน: ${list}${d.rejected.length > 3 ? " …" : ""}`), 3400);
+      }
+      await onRestored();
+    } catch (e) {
+      flash(`❌ ${e instanceof Error ? e.message : "กู้คืนไม่สำเร็จ"}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section style={sx.card}>
+      <button style={sx.backupToggle} onClick={() => setOpen((v) => !v)}>
+        {open ? "▾ ปิดสำรอง/กู้คืนฐานอาหาร" : "💾 สำรอง / กู้คืนฐานอาหาร"}
+      </button>
+
+      {open && (
+        <div style={sx.backupBody}>
+          <div style={sx.backupHead}>ดาวน์โหลดไฟล์สำรอง</div>
+          <label style={sx.checkRow}>
+            <input type="checkbox" checked={shared} onChange={(e) => setShared(e.target.checked)} />
+            <span>รวมฐานกลางด้วย (ปกติไม่ต้อง — ระบบมีให้อยู่แล้ว กู้คืนกลับก็ไม่ได้)</span>
+          </label>
+          <div style={sx.editActions}>
+            <button style={sx.saveBtn} onClick={() => download("json")}>
+              ⬇️ JSON (กู้คืนได้)
+            </button>
+            <button style={sx.secondaryBtn} onClick={() => download("csv")}>
+              ⬇️ CSV (เปิดใน Excel)
+            </button>
+          </div>
+          <div style={sx.editHint}>
+            ไฟล์ JSON คือไฟล์ที่เอากลับเข้าระบบได้ · CSV มีไว้เปิดดู/แก้ใน Excel (เปิดภาษาไทยได้ถูกต้อง)
+          </div>
+
+          <div style={{ ...sx.backupHead, marginTop: 14 }}>กู้คืนจากไฟล์</div>
+          <div style={sx.modeTabs}>
+            <button
+              style={{ ...sx.modeTab, ...(mode === "skip" ? sx.modeTabOn : null) }}
+              onClick={() => setMode("skip")}
+            >
+              ข้ามของที่มีแล้ว
+            </button>
+            <button
+              style={{ ...sx.modeTab, ...(mode === "overwrite" ? sx.modeTabOn : null) }}
+              onClick={() => setMode("overwrite")}
+            >
+              ทับของเดิม
+            </button>
+          </div>
+          <div style={sx.editHint}>
+            {mode === "skip"
+              ? "เติมเฉพาะอาหารที่หายไป — ของที่มีอยู่แล้วจะไม่ถูกแตะ (ปลอดภัยกว่า)"
+              : "⚠️ อาหารชื่อเดียวกันจะถูกทับด้วยค่าจากไฟล์ ใช้ตอนอยากย้อนกลับไปสภาพเดิมทั้งชุด"}
+          </div>
+          <label style={{ ...sx.saveBtn, ...sx.uploadLabel, opacity: busy ? 0.5 : 1 }}>
+            {busy ? "กำลังกู้คืน…" : "📂 เลือกไฟล์ .json แล้วกู้คืน"}
+            <input
+              type="file"
+              accept="application/json,.json"
+              disabled={busy}
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                // เคลียร์ค่าไว้ เพื่อให้เลือกไฟล์เดิมซ้ำแล้ว onChange ยังยิงอีกรอบ
+                e.target.value = "";
+                if (f) void restore(f);
+              }}
+            />
+          </label>
+          <div style={sx.editHint}>
+            กู้คืนเข้าได้เฉพาะฐานของธุรกิจคุณ — รายการฐานกลางในไฟล์จะถูกข้ามอัตโนมัติ
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function FoodRow({
   food, token, flash, onChanged, busy,
 }: {
@@ -1726,6 +1865,40 @@ const sx: Record<string, React.CSSProperties> = {
     fontSize: 13,
     lineHeight: 1.7,
   },
+  backupToggle: {
+    border: "none",
+    background: "none",
+    color: T.accent,
+    fontSize: 15,
+    fontWeight: 700,
+    cursor: "pointer",
+    padding: 0,
+    textAlign: "left",
+    width: "100%",
+  },
+  backupBody: { marginTop: 14, display: "flex", flexDirection: "column", gap: 10 },
+  backupHead: { fontSize: 14.5, fontWeight: 700, color: T.fgStrong },
+  checkRow: {
+    display: "flex",
+    gap: 9,
+    alignItems: "flex-start",
+    fontSize: 13.5,
+    color: T.muted,
+    lineHeight: 1.65,
+    cursor: "pointer",
+  },
+  secondaryBtn: {
+    flex: 1,
+    padding: "11px 16px",
+    borderRadius: T.radius,
+    border: `1px solid ${T.borderStrong}`,
+    background: T.surface,
+    color: T.fg,
+    fontWeight: 600,
+    fontSize: 15,
+    cursor: "pointer",
+  },
+  uploadLabel: { display: "block", textAlign: "center", cursor: "pointer" },
   previewBox: {
     padding: "10px 12px",
     borderRadius: T.radiusSm,

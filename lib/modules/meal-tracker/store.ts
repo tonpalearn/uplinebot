@@ -744,6 +744,106 @@ export async function recalcEntriesForFood(
   return updated;
 }
 
+export interface ImportFoodInput {
+  name: string;
+  carbG: number;
+  proteinG: number;
+  fatG: number;
+  basis: FoodBasis;
+  unitLabel: string | null;
+  unitGrams: number | null;
+  aliases: string | null;
+  source: string;
+}
+
+export interface ImportResult {
+  added: number;
+  updated: number;
+  skipped: number;
+  rejected: { name: string; reason: string }[];
+}
+
+/**
+ * กู้คืนฐานอาหารจากไฟล์สำรอง — เข้าฐานของ tenant เท่านั้น (ฐานกลางไม่ถูกแตะ).
+ *
+ * `mode`:
+ *   'skip'      = มีชื่อนี้อยู่แล้วให้ข้าม (ปลอดภัยสุด — ใช้ตอนอยากเติมของที่หายไปโดยไม่ทับของใหม่)
+ *   'overwrite' = ทับด้วยค่าจากไฟล์ (ใช้ตอนอยากย้อนกลับไปสภาพเดิมทั้งชุด)
+ * ค่าเริ่มต้นคือ 'skip' เพราะการกู้คืนผิดจังหวะแล้วทับของที่เพิ่งแก้ไปเสียหายกว่าการข้าม
+ *
+ * แถวที่ข้อมูลไม่ผ่านเกณฑ์ถูก "ปฏิเสธพร้อมเหตุผล" ไม่ใช่เงียบ ๆ — ผู้ใช้ต้องรู้ว่าอะไรไม่เข้า
+ */
+export async function importFoods(
+  tenantId: string,
+  items: ImportFoodInput[],
+  mode: "skip" | "overwrite" = "skip"
+): Promise<ImportResult> {
+  const supabase = getServiceClient();
+  const result: ImportResult = { added: 0, updated: 0, skipped: 0, rejected: [] };
+
+  // ชื่อที่ tenant มีอยู่แล้ว (เทียบแบบไม่สนตัวพิมพ์/ช่องว่างหัวท้าย เหมือนตอน upsert)
+  const { data: existingRows, error: readErr } = await supabase
+    .from("upl_food_items")
+    .select("id, name")
+    .eq("tenant_id", tenantId);
+  if (readErr) throw new Error(`Failed to read existing foods: ${readErr.message}`);
+
+  const existing = new Map<string, string>();
+  for (const r of (existingRows ?? []) as { id: string; name: string }[]) {
+    existing.set(r.name.trim().toLowerCase(), r.id);
+  }
+
+  for (const item of items) {
+    const name = (item.name ?? "").trim();
+    if (!name || name.length > 60) {
+      result.rejected.push({ name: name || "(ไม่มีชื่อ)", reason: "ชื่อว่างหรือยาวเกิน 60 ตัวอักษร" });
+      continue;
+    }
+    const c = Number(item.carbG);
+    const p = Number(item.proteinG);
+    const f = Number(item.fatG);
+    if (![c, p, f].every((n) => Number.isFinite(n) && n >= 0)) {
+      result.rejected.push({ name, reason: "ค่าสารอาหารไม่ใช่ตัวเลขหรือติดลบ" });
+      continue;
+    }
+    if (c + p + f <= 0) {
+      result.rejected.push({ name, reason: "สารอาหารเป็น 0 ทั้งหมด" });
+      continue;
+    }
+
+    const key = name.toLowerCase();
+    const hit = existing.get(key);
+    if (hit && mode === "skip") {
+      result.skipped += 1;
+      continue;
+    }
+
+    await upsertTenantFood(tenantId, {
+      name,
+      carbG: c,
+      proteinG: p,
+      fatG: f,
+      basis: item.basis === "per_serving" ? "per_serving" : "per_100g",
+      unitLabel: item.unitLabel?.trim() || null,
+      unitGrams:
+        item.unitGrams !== null && Number.isFinite(Number(item.unitGrams)) && Number(item.unitGrams) > 0
+          ? Number(item.unitGrams)
+          : null,
+      aliases: item.aliases?.trim() || null,
+      // ที่มาจากไฟล์สำรองต้องคงไว้ตามเดิม ไม่งั้นของที่คนเคยตรวจแล้วจะกลายเป็น AI เดา (หรือกลับกัน)
+      source: item.source === "ai-estimate" || item.source === "admin" ? item.source : "chat",
+    });
+
+    if (hit) result.updated += 1;
+    else {
+      result.added += 1;
+      existing.set(key, "new");
+    }
+  }
+
+  return result;
+}
+
 /**
  * ลบอาหารออกจากฐาน — **เฉพาะของ tenant ตัวเอง**. ฐานกลาง (tenant_id = null) ลบไม่ได้เด็ดขาด
  * เพราะใช้ร่วมกันทุกธุรกิจ — ธุรกิจที่ไม่อยากใช้ค่ากลางให้ "สอนทับ" ชื่อเดียวกันแทน
