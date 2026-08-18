@@ -9,6 +9,10 @@ import { isGeminiEnabled, geminiModel, geminiKeySource } from "@/lib/ai/gemini";
  * และ env var ที่เพิ่งใส่ใน Vercel จะยังไม่มีผลจนกว่าจะ redeploy — สองอย่างนี้มองจากข้างนอกไม่เห็น
  * เลยถ้าไม่มีปลายทางให้ถาม.
  *
+ * รายงาน commit ที่ deploy อยู่ด้วย (`VERCEL_GIT_COMMIT_SHA` ที่ Vercel ใส่ให้เอง) — เจอมาแล้ว 2 ครั้ง
+ * ว่า push ขึ้น GitHub ครบแต่ Vercel **ไม่สร้าง build เลย** ทำให้ทดสอบของใหม่แล้วงงว่าทำไมพฤติกรรมเก่า
+ * ไม่มีทางรู้จากข้างนอกเลยถ้าไม่มีตรงนี้ (repo เป็น public อยู่แล้ว SHA จึงไม่ใช่ความลับ)
+ *
  * ตอบเฉพาะ boolean + ชื่อโมเดล (ซึ่งอยู่ในเอกสารสาธารณะอยู่แล้ว) — ไม่มีคีย์ ไม่มี URL ฐานข้อมูล
  * ไม่มีข้อมูลลูกค้า. ไม่ยิง Gemini จริงเพื่อไม่ให้ใครใช้ปลายทางนี้ผลาญโควตาของเรา — การพิสูจน์ว่า
  * "คีย์ใช้ได้จริง" ทำโดยพิมพ์อาหารนอกฐานในไลน์แล้วดูว่ามีแถว source='ai-estimate' เกิดขึ้นไหม.
@@ -26,6 +30,8 @@ export async function GET() {
       keySource: geminiKeySource(),
       model: geminiModel(),
     },
+    /** commit ที่ deploy อยู่จริง — ใช้ตอบคำถาม "push แล้วขึ้นหรือยัง" ได้ใน 5 วิ */
+    commit: (process.env.VERCEL_GIT_COMMIT_SHA ?? "").slice(0, 7) || null,
     ts: new Date().toISOString(),
   });
 }
