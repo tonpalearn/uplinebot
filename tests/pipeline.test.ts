@@ -85,6 +85,18 @@ vi.mock("../lib/db", () => ({
 
 // Slip handler decrypts the stored access token via lib/crypto — stub it so we
 // don't depend on ENCRYPTION_KEY behavior for this pipeline test.
+// Slip Verification กรอง "รูปนี้เป็นสลิปไหม" ด้วย QR ก่อนเรียก provider — เทสต์นี้สนใจ
+// เรื่องลำดับ router ไม่ใช่การถอด QR จึงจำลองว่าเจอ QR (= เป็นสลิป) ไว้เสมอ
+vi.mock("../lib/payments/slip-decode", () => ({
+  decodeSlip: async () => ({
+    foundQr: true,
+    rawQr: "00020101021229370016A000000677010111",
+    transRef: null,
+    sendingBank: null,
+    imageHash: "fake-image-hash",
+  }),
+}));
+
 vi.mock("../lib/crypto", () => ({
   decrypt: (buf: Buffer) => buf.toString("utf8"),
 }));

@@ -15,7 +15,22 @@ import type { LineEvent, TenantContext } from "../lib/modules/types";
  *   valid/invalid marker — see providers/mock.ts).
  * - lib/crypto.ts's decrypt() is mocked to a no-op since bot access token lookups
  *   go through getServiceClient() too (routed to a generic table stub).
+ * - lib/payments/slip-decode.ts's decodeSlip() is mocked because the handler now gates on
+ *   "is this even a slip?" (QR present) BEFORE calling the provider. Default = QR found, so the
+ *   provider-logic tests below read the same as before; the gate itself is tested separately.
  */
+
+const { qrState } = vi.hoisted(() => ({ qrState: { foundQr: true } }));
+
+vi.mock("../lib/payments/slip-decode", () => ({
+  decodeSlip: async () => ({
+    foundQr: qrState.foundQr,
+    rawQr: qrState.foundQr ? "00020101021229370016A00000067701011101130066812345678" : null,
+    transRef: null,
+    sendingBank: null,
+    imageHash: "fake-image-hash",
+  }),
+}));
 
 const insertMock = vi.fn();
 let duplicateOnNextInsert = false;
@@ -116,6 +131,7 @@ describe("SlipVerificationModule (MockSlipProvider, SLIP_PROVIDER=mock)", () => 
     insertMock.mockClear();
     getMessageContentMock.mockReset();
     duplicateOnNextInsert = false;
+    qrState.foundQr = true; // ค่าเริ่มต้น: เป็นสลิป (มี QR) — เทสต์ด่านกรองจะสลับเป็น false เอง
     expect(process.env.SLIP_PROVIDER).toBe("mock");
   });
 
@@ -221,5 +237,52 @@ describe("SlipVerificationModule (MockSlipProvider, SLIP_PROVIDER=mock)", () => 
     expect(insertMock).not.toHaveBeenCalled();
 
     verifySpy.mockRestore();
+  });
+});
+
+// ── ด่าน "รูปนี้เป็นสลิปไหม" (บั๊กจากการใช้งานจริง 5 ส.ค. 69) ─────────────────────
+//
+// อาการที่ต้นเจอ: มีคนโพสต์รูปอะไรก็ตามในกลุ่ม แล้วบอทตอบ
+// "❌ ไม่สามารถยืนยันสลิปนี้ได้ …" ใส่ทุกใบ เพราะ matchesIntent รับรูปทุกรูป
+// แล้ว provider ตอบ isValid=false ให้กับรูปที่ไม่ใช่สลิปอยู่แล้วโดยธรรมชาติ
+describe("SlipVerificationModule — รูปที่ไม่ใช่สลิป ต้องเงียบ", () => {
+  beforeEach(() => {
+    insertMock.mockClear();
+    getMessageContentMock.mockReset();
+    duplicateOnNextInsert = false;
+  });
+
+  it("ไม่มี QR (รูปทั่วไปในกลุ่ม) → ไม่ตอบอะไรเลย", async () => {
+    qrState.foundQr = false;
+    // ไบต์แรก 0x00 = provider จะตอบ invalid ถ้าถูกเรียก — ต้องไม่ถูกเรียกด้วยซ้ำ
+    getMessageContentMock.mockResolvedValue(Buffer.from([0x00, 0x11, 0x22]));
+
+    const result = await SlipVerificationModule.handleEvent(makeImageEvent("msg-not-a-slip"), makeCtx());
+
+    expect(result).toEqual([]);
+  });
+
+  it("ไม่มี QR → ต้องไม่เขียนแถวลง upl_slip_verifications (เดิมเขียน failed ทุกรูป)", async () => {
+    qrState.foundQr = false;
+    getMessageContentMock.mockResolvedValue(Buffer.from([0x00, 0x11, 0x22]));
+
+    await SlipVerificationModule.handleEvent(makeImageEvent("msg-cat-photo"), makeCtx());
+
+    expect(insertMock).not.toHaveBeenCalled();
+  });
+
+  it("มี QR แต่ตรวจไม่ผ่าน → ยังต้องเตือนเหมือนเดิม (นี่คือสลิปจริงที่มีปัญหา)", async () => {
+    qrState.foundQr = true;
+    getMessageContentMock.mockResolvedValue(Buffer.from([0x00, 0x11, 0x22])); // 0x00 = invalid
+
+    const result = await SlipVerificationModule.handleEvent(makeImageEvent("msg-bad-slip"), makeCtx());
+
+    expect(result).toHaveLength(1);
+    expect(result[0].text).toContain("ไม่สามารถยืนยันสลิปนี้ได้");
+    expect(insertMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("matchesIntent ยังรับรูปทุกรูป (เป็น sync แตะ I/O ไม่ได้) — การกรองอยู่ที่ handleEvent", () => {
+    expect(SlipVerificationModule.matchesIntent(makeImageEvent("m"), {})).toBe(true);
   });
 });
