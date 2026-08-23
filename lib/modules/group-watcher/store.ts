@@ -288,6 +288,25 @@ export async function lastReportAt(targetId: string): Promise<Date | null> {
   return data ? new Date(data.created_at as string) : null;
 }
 
+/**
+ * จองสิทธิ์รันรอบสรุปของกลุ่มนี้ — คืน false ถ้ามีรอบอื่นทำงานอยู่
+ *
+ * cron ยิงทุก 1 นาที แต่รอบหนึ่งอาจใช้เวลานานกว่านั้น (AI สรุป + push) รอบถัดไปจึงเริ่ม
+ * ก่อนที่รอบแรกจะ mark เสร็จ แล้วอ่านเจอข้อความชุดเดิม → ส่งสรุปซ้ำ (เกิดจริงมาแล้ว)
+ */
+export async function tryBeginSummary(targetId: string): Promise<boolean> {
+  const supabase = getServiceClient();
+  const { data, error } = await supabase.rpc("upl_watch_try_begin", { p_target: targetId });
+  if (error) throw new Error(`Failed to claim summary run for ${targetId}: ${error.message}`);
+  return data === true;
+}
+
+/** ปลดธง — ต้องเรียกเสมอ ไม่ว่ารอบนั้นจะสำเร็จหรือไม่ */
+export async function endSummary(targetId: string): Promise<void> {
+  const supabase = getServiceClient();
+  await supabase.rpc("upl_watch_end", { p_target: targetId });
+}
+
 /** ทุกกลุ่มที่เปิดเฝ้าอยู่ — ใช้โดย cron */
 export async function listActiveWatches(): Promise<WatchConfig[]> {
   const supabase = getServiceClient();

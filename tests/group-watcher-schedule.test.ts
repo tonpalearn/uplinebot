@@ -169,3 +169,28 @@ describe("เวลาสรุปส่งไม่ถึงมือ ต้อ
     expect(src).toContain("result.errors.push");
   });
 });
+
+// ── บทเรียนจากการรันจริงบน prod ────────────────────────────────────────────────
+describe("บั๊กที่เจอตอนเปิดใช้จริง — ล็อกไว้ไม่ให้กลับมา", () => {
+  it("อ่านข้อความรอสรุปต้องผ่านฟังก์ชัน SQL ไม่ใช่ select หลายคอลัมน์ผ่าน REST", async () => {
+    // select("id,display_name,text,sent_at") เคยคืน 0 แถวเงียบ ๆ ทั้งที่นับได้ 7
+    // ขอทีละคอลัมน์ได้ครบ แต่ขอพร้อมกันได้ศูนย์ — กลุ่มที่มีข้อความค้างจึงไม่เคยถูกสรุป
+    const src = await import("node:fs").then((fs) =>
+      fs.readFileSync("lib/modules/group-watcher/store.ts", "utf8")
+    );
+    const getPending = src.slice(src.indexOf("export async function getPending"));
+    expect(getPending).toContain('rpc("upl_watch_pending"');
+    expect(getPending.slice(0, getPending.indexOf("}"))).not.toContain('.select("id, display_name');
+  });
+
+  it("รอบสรุปต้องจองสิทธิ์ก่อนรัน และปลดธงใน finally", async () => {
+    // cron ยิงทุก 1 นาที แต่รอบหนึ่งอาจนานกว่านั้น → รอบที่ทับกันเคยส่งสรุปซ้ำมาแล้วจริง
+    const src = await import("node:fs").then((fs) =>
+      fs.readFileSync("lib/modules/group-watcher/cron.ts", "utf8")
+    );
+    expect(src).toContain("tryBeginSummary");
+    expect(src.indexOf("tryBeginSummary")).toBeLessThan(src.indexOf("runSummary(cfg"));
+    // ปลดธงต้องอยู่ใน finally ไม่งั้นรอบที่ล้มจะทำให้กลุ่มค้างจนกว่า stale timeout จะหมด
+    expect(src).toMatch(/finally\s*\{[^}]*endSummary/s);
+  });
+});

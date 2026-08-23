@@ -1,4 +1,12 @@
-import { listActiveWatches, purgeOldMessages, updateWatchConfig, lastReportAt, type WatchConfig } from "./store";
+import {
+  listActiveWatches,
+  purgeOldMessages,
+  updateWatchConfig,
+  lastReportAt,
+  tryBeginSummary,
+  endSummary,
+  type WatchConfig,
+} from "./store";
 import { runSummary } from "./handler";
 import { getServiceClient } from "../../db";
 
