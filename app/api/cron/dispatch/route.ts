@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dispatchDueJobs } from "@/lib/scheduler/dispatcher";
 import { scanTodoReminders } from "@/lib/reminders";
+import { runGroupWatchCron } from "@/lib/modules/group-watcher/cron";
 
 // Never prerender/cache — invoked on a schedule and must run live per request.
 export const dynamic = "force-dynamic";
@@ -35,7 +36,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const now = new Date();
     const jobs = await dispatchDueJobs(now);
     const reminders = await scanTodoReminders(now);
-    return NextResponse.json({ ok: true, jobs, reminders });
+    // ผู้ช่วยเฝ้ากลุ่ม: สรุปกลุ่มที่ถึงรอบ + **ลบข้อความที่เก็บเกินกำหนด**
+    // (ตัวหลังสำคัญกว่า — ถ้ารอบนี้ไม่ทำงาน บทสนทนาของคนอื่นจะค้างในระบบไปเรื่อย ๆ)
+    const watch = await runGroupWatchCron(now);
+    return NextResponse.json({ ok: true, jobs, reminders, watch });
   } catch (err) {
     return NextResponse.json(
       { ok: false, reason: err instanceof Error ? err.message : String(err) },

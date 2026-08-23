@@ -4,6 +4,7 @@ import { assertModuleEntitled, EntitlementError } from "../../entitlement";
 import { getServiceClient } from "../../db";
 import { decrypt } from "../../crypto";
 import { getMessageContent } from "../../line/client";
+import { getBotAccessToken } from "../../line/token";
 import { decodeSlip } from "../../payments/slip-decode";
 import type { SlipProvider, SlipVerifyResult } from "./providers/types";
 import { MockSlipProvider } from "./providers/mock";
@@ -215,18 +216,3 @@ async function getProviderApiKey(tenantId: string, provider: string): Promise<st
   return decrypt(data.credential_enc);
 }
 
-async function getBotAccessToken(botId: string): Promise<string> {
-  const supabase = getServiceClient();
-  const { data, error } = await supabase
-    .from("upl_bots")
-    .select("access_token_enc")
-    .eq("id", botId)
-    .single();
-
-  if (error || !data) {
-    throw new Error(`Failed to load access token for bot ${botId}`);
-  }
-
-  // access_token_enc is a base64 text column (migration 0002) — pass the string straight in.
-  return decrypt(data.access_token_enc);
-}

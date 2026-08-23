@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyLineSignature } from "@/lib/line/verify";
 import { lookupBotByChannelId, resolveContext } from "@/lib/context";
 import { routeEvent } from "@/lib/modules/registry";
+import { captureIfWatched } from "@/lib/modules/group-watcher/handler";
 import { replyMessage } from "@/lib/line/client";
 import { decrypt } from "@/lib/crypto";
 import { getServiceClient } from "@/lib/db";
@@ -97,6 +98,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     for (const event of parsed.events ?? []) {
       try {
         const ctx = await resolveContext(event, bot);
+
+        // ผู้ช่วยเฝ้ากลุ่มเก็บบทสนทนา "ข้าง ๆ" ก่อนเข้า Command Router — ต้องอยู่ตรงนี้ ไม่ใช่ใน
+        // router เพราะ router เป็น first-match-wins: โมดูลที่รับข้อความทุกอันจะกลืนคำสั่ง
+        // ของโมดูลอื่นหมด. ฟังก์ชันนี้ไม่ throw และเงียบเสมอเมื่อกลุ่มไม่ได้เปิดเฝ้า
+        await captureIfWatched(event, ctx);
+
         const outbound = await routeEvent(event, ctx);
 
         if (outbound.length > 0 && event.replyToken) {

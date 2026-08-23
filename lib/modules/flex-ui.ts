@@ -88,6 +88,17 @@ export const KM_ACCENT: AccentTheme = {
 
 /** MEAL / FOOD = ORANGE / amber — the บันทึกอาหาร (โภชนาการ) identity. Warm + appetizing, and
  *  unmistakably NOT todo-red or money-green at a glance in a busy chat. */
+/** ผู้ช่วยเฝ้ากลุ่ม — คราม/indigo: แยกจากงาน(แดง) เงิน(เขียว) คลังความรู้(เขียวสด) อาหาร(ส้ม) */
+export const WATCH_ACCENT: AccentTheme = {
+  gradStart: "#818CF8", // indigo-400
+  gradEnd: "#3730A3", // indigo-800
+  solid: "#4F46E5", // indigo-600
+  onAccent: "#FFFFFF",
+  onAccentMuted: "#E0E7FF", // indigo-100
+  chipBg: "#E0E7FF",
+  chipText: "#3730A3",
+};
+
 export const MEAL_ACCENT: AccentTheme = {
   gradStart: "#FB923C", // orange-400
   gradEnd: "#C2410C", // orange-700
