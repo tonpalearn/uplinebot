@@ -192,12 +192,26 @@ export async function getPending(targetId: string, limit = 500): Promise<Pending
         .from("upl_group_messages")
         .select("id", { count: "exact", head: true })
         .eq("target_id", targetId);
+    // ยิงซ้ำด้วย query เดิมเป๊ะ ๆ แล้วดูของดิบ — แยกให้ออกว่า data เป็น [] หรือเป็น null
+    const again = await (supabase as any)
+      .from("upl_group_messages")
+      .select("id, display_name, text, sent_at")
+      .eq("target_id", targetId)
+      .eq("summarized", false)
+      .order("sent_at", { ascending: true })
+      .limit(limit);
+    const one = await (supabase as any)
+      .from("upl_group_messages")
+      .select("id")
+      .eq("target_id", targetId)
+      .limit(3);
+
     probe = [
-      `กลุ่มนี้=${await n(t())}`,
-      `+summarized=false → ${await n(t().eq("summarized", false))}`,
-      `+is(false) → ${await n(t().is("summarized", false))}`,
-      `+order → ${await n(t().eq("summarized", false).order("sent_at", { ascending: true }))}`,
-      `+limit500 → ${await n(t().eq("summarized", false).limit(500))}`,
+      `count=${await n(t().eq("summarized", false))}`,
+      `เดิม: data=${data === null ? "null" : `[${(data as unknown[]).length}]`}`,
+      `ซ้ำ: data=${again.data === null ? "null" : `[${again.data.length}]`} err=${again.error ? `${again.error.code}/${String(again.error.message).slice(0, 60)}` : "-"}`,
+      `แค่ id: data=${one.data === null ? "null" : `[${one.data.length}]`} err=${one.error ? String(one.error.message).slice(0, 60) : "-"}`,
+      `limitค่า=${limit}`,
     ].join(" | ");
   }
 
