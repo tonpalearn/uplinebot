@@ -123,21 +123,33 @@ export async function runGroupWatchCron(now = new Date()): Promise<WatchCronResu
         continue;
       }
 
-      const r = await runSummary(cfg, botId, `กลุ่ม ${tag}`, "scheduled");
-      if (r.delivered) result.summarized += 1;
-      result.decisions.push(
-        `${tag}: ถึงรอบ pending=${r.count} ขั้นต่ำ=${cfg.minMessages} ส่ง=${r.delivered ? "สำเร็จ" : "ไม่สำเร็จ"}` +
-          (r.failures.length ? ` | ${r.failures.join(" ; ")}` : "")
-      );
-      // ส่งไม่ออกทั้งที่ถึงรอบแล้ว = ต้องดังพอให้เห็นใน /api/health ไม่ใช่หายเงียบ
-      // (นี่คืออาการที่ทำให้ "ตั้งเวลาแล้วสรุปไม่มา" ไล่หาสาเหตุไม่ได้)
-      for (const f of r.failures) {
-        result.errors.push(`deliver ${cfg.targetId.slice(0, 8)}: ${f}`);
+      // จองสิทธิ์ก่อนเสมอ — cron ยิงทุก 1 นาที แต่รอบหนึ่งนานกว่านั้นได้ (AI + push)
+      // ถ้าไม่จอง รอบที่ทับกันจะอ่านเจอข้อความชุดเดิมแล้วส่งสรุปซ้ำ (เกิดจริงมาแล้ว)
+      if (!(await tryBeginSummary(cfg.targetId))) {
+        result.decisions.push(`${tag}: ข้าม — มีรอบสรุปทำงานอยู่`);
+        continue;
       }
 
-      // แตะ last_alert_at ไว้ด้วย เพื่อไม่ให้คำสำคัญเด้งซ้ำทันทีหลังเพิ่งส่งสรุปรอบไป
-      if (r.delivered) {
-        await updateWatchConfig(cfg.targetId, { lastAlertAt: now.toISOString() });
+      try {
+        const r = await runSummary(cfg, botId, `กลุ่ม ${tag}`, "scheduled");
+        if (r.delivered) result.summarized += 1;
+        result.decisions.push(
+          `${tag}: ถึงรอบ pending=${r.count} ขั้นต่ำ=${cfg.minMessages} ส่ง=${r.delivered ? "สำเร็จ" : "ไม่สำเร็จ"}` +
+            (r.failures.length ? ` | ${r.failures.join(" ; ")}` : "")
+        );
+        // ส่งไม่ออกทั้งที่ถึงรอบแล้ว = ต้องดังพอให้เห็นใน /api/health ไม่ใช่หายเงียบ
+        // (นี่คืออาการที่ทำให้ "ตั้งเวลาแล้วสรุปไม่มา" ไล่หาสาเหตุไม่ได้)
+        for (const f of r.failures) {
+          result.errors.push(`deliver ${tag}: ${f}`);
+        }
+
+        // แตะ last_alert_at ไว้ด้วย เพื่อไม่ให้คำสำคัญเด้งซ้ำทันทีหลังเพิ่งส่งสรุปรอบไป
+        if (r.delivered) {
+          await updateWatchConfig(cfg.targetId, { lastAlertAt: now.toISOString() });
+        }
+      } finally {
+        // ต้องปลดธงเสมอ ไม่งั้นกลุ่มนี้จะติดค้างจนกว่า stale timeout (5 นาที) จะหมด
+        await endSummary(cfg.targetId);
       }
     } catch (err) {
       result.errors.push(`summary ${cfg.targetId}: ${err instanceof Error ? err.message : err}`);

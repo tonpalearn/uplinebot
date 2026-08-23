@@ -191,6 +191,6 @@ describe("บั๊กที่เจอตอนเปิดใช้จริ�
     expect(src).toContain("tryBeginSummary");
     expect(src.indexOf("tryBeginSummary")).toBeLessThan(src.indexOf("runSummary(cfg"));
     // ปลดธงต้องอยู่ใน finally ไม่งั้นรอบที่ล้มจะทำให้กลุ่มค้างจนกว่า stale timeout จะหมด
-    expect(src).toMatch(/finally\s*\{[^}]*endSummary/s);
+    expect(src).toMatch(/finally\s*\{[^}]*endSummary/);
   });
 });
