@@ -133,8 +133,17 @@ export async function runGroupWatchCron(now = new Date()): Promise<WatchCronResu
       try {
         const r = await runSummary(cfg, botId, `กลุ่ม ${tag}`, "scheduled");
         if (r.delivered) result.summarized += 1;
+        // ถ้อยคำต้องแยก "ไม่ได้ส่งเพราะยังไม่ถึงเกณฑ์" (ปกติ) ออกจาก "ส่งแล้วไม่ผ่าน" (ปัญหา)
+        // ไม่งั้นคนอ่าน log รอบหน้าจะเห็น "ไม่สำเร็จ" แล้วไล่หาบั๊กที่ไม่มีอยู่จริง
+        const outcome = r.delivered
+          ? "ส่งแล้ว"
+          : r.count === 0
+            ? "ไม่มีข้อความใหม่"
+            : r.count < cfg.minMessages
+              ? `ยังไม่ถึงขั้นต่ำ ${cfg.minMessages} ข้อความ`
+              : "ส่งไม่ผ่าน";
         result.decisions.push(
-          `${tag}: ถึงรอบ pending=${r.count} ขั้นต่ำ=${cfg.minMessages} ส่ง=${r.delivered ? "สำเร็จ" : "ไม่สำเร็จ"}` +
+          `${tag}: ถึงรอบ pending=${r.count} → ${outcome}` +
             (r.failures.length ? ` | ${r.failures.join(" ; ")}` : "")
         );
         // ส่งไม่ออกทั้งที่ถึงรอบแล้ว = ต้องดังพอให้เห็นใน /api/health ไม่ใช่หายเงียบ
