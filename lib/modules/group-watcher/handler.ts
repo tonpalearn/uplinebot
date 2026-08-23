@@ -7,6 +7,7 @@ import {
   captureMessage,
   getPending,
   markSummarized,
+  unmarkSummarized,
   setOptOut,
   countOptOuts,
   lastReportAt,
@@ -137,11 +138,20 @@ export async function runSummary(
     includeNames: cfg.includeNames,
   });
 
-  const { deliveredTo, failures } = await deliverSummary(cfg, botId, card);
-  if (!deliveredTo) return { delivered: false, count: pending.ids.length, summary, failures };
-
-  // mark หลังส่งสำเร็จเท่านั้น — ส่งไม่ออกแล้ว mark ไปแล้ว = บทสนทนาหายไปเงียบ ๆ
+  // **จองก่อนส่ง** — ลำดับนี้สำคัญกว่าที่คิด
+  //
+  // เดิมส่งก่อนแล้วค่อย mark ซึ่งดูปลอดภัยกว่า (ส่งไม่ออก = ไม่ mark = ได้สรุปรอบหน้า)
+  // แต่ถ้าขั้น mark ล้มหลังส่งสำเร็จ รอบถัดไปจะอ่านเจอชุดเดิม สรุปใหม่ ส่งซ้ำ — ทุกนาที
+  // ไม่มีที่สิ้นสุด (เกิดจริง: ส่งซ้ำ 10 ครั้งติดเข้าแชทผู้ใช้)
+  //
+  // จองก่อนแล้วคืนเมื่อส่งไม่ผ่าน ทำให้เคสแย่สุดกลายเป็น "สรุปหาย 1 รอบ" แทน "สแปมไม่หยุด"
   await markSummarized(pending.ids);
+
+  const { deliveredTo, failures } = await deliverSummary(cfg, botId, card);
+  if (!deliveredTo) {
+    await unmarkSummarized(pending.ids);
+    return { delivered: false, count: pending.ids.length, summary, failures };
+  }
   await logReport(
     cfg.targetId,
     kind,

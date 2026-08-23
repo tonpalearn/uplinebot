@@ -191,15 +191,41 @@ export async function getPending(targetId: string, limit = 500): Promise<Pending
   };
 }
 
-/** ทำเครื่องหมายว่าสรุปไปแล้ว — เรียกหลังส่งสำเร็จเท่านั้น (ส่งไม่ออก = ต้องได้สรุปรอบหน้า) */
+/**
+ * ทำเครื่องหมายว่าสรุปไปแล้ว — เรียกหลังส่งสำเร็จเท่านั้น
+ *
+ * **ต้องยืนยันว่าอัปเดตได้ครบจริง** ไม่ใช่ยิงแล้วเชื่อ: ถ้าขั้นนี้เงียบ ๆ ไม่สำเร็จ รอบถัดไป
+ * จะอ่านเจอข้อความชุดเดิม สรุปใหม่ แล้วส่งซ้ำ — ทุกนาที ไม่มีที่สิ้นสุด (เกิดจริงมาแล้ว
+ * ส่งซ้ำ 10 ครั้งติดเข้าแชทผู้ใช้) การล้มแบบดังจึงดีกว่าการส่งสแปมแบบเงียบ
+ */
 export async function markSummarized(ids: number[]): Promise<void> {
+  if (ids.length === 0) return;
+  const supabase = getServiceClient();
+  const { data, error } = await supabase
+    .from("upl_group_messages")
+    .update({ summarized: true })
+    .in("id", ids)
+    .select("id");
+
+  if (error) throw new Error(`Failed to mark messages summarized: ${error.message}`);
+
+  const updated = (data ?? []).length;
+  if (updated !== ids.length) {
+    throw new Error(
+      `Marked ${updated}/${ids.length} messages summarized — ยังไม่ครบ หยุดไว้ก่อนเพื่อไม่ให้ส่งซ้ำ`
+    );
+  }
+}
+
+/** คืนสถานะเมื่อส่งไม่สำเร็จ — ข้อความจะได้ถูกสรุปใหม่ในรอบหน้าแทนที่จะหายเงียบ */
+export async function unmarkSummarized(ids: number[]): Promise<void> {
   if (ids.length === 0) return;
   const supabase = getServiceClient();
   const { error } = await supabase
     .from("upl_group_messages")
-    .update({ summarized: true })
+    .update({ summarized: false })
     .in("id", ids);
-  if (error) throw new Error(`Failed to mark messages summarized: ${error.message}`);
+  if (error) throw new Error(`Failed to unmark messages: ${error.message}`);
 }
 
 /**

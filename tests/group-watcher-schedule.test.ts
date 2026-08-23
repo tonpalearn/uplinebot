@@ -194,3 +194,24 @@ describe("บั๊กที่เจอตอนเปิดใช้จริ�
     expect(src).toMatch(/finally\s*\{[^}]*endSummary/);
   });
 });
+
+describe("ส่งซ้ำไม่รู้จบ — ปิดทางไว้ 3 ชั้น", () => {
+  it("จองก่อนส่ง แล้วคืนสถานะเมื่อส่งไม่ผ่าน", async () => {
+    const src = await import("node:fs").then((fs) =>
+      fs.readFileSync("lib/modules/group-watcher/handler.ts", "utf8")
+    );
+    const mark = src.indexOf("await markSummarized(");
+    const send = src.indexOf("await deliverSummary(");
+    expect(mark).toBeGreaterThan(-1);
+    expect(mark).toBeLessThan(send);          // จองก่อน ส่งทีหลัง
+    expect(src).toContain("unmarkSummarized"); // ส่งไม่ผ่านต้องคืนให้รอบหน้า
+  });
+
+  it("markSummarized ต้องยืนยันว่าอัปเดตครบ ไม่ใช่ยิงแล้วเชื่อ", async () => {
+    const src = await import("node:fs").then((fs) =>
+      fs.readFileSync("lib/modules/group-watcher/store.ts", "utf8")
+    );
+    const fn = src.slice(src.indexOf("export async function markSummarized"));
+    expect(fn.slice(0, 800)).toContain("updated !== ids.length");
+  });
+});
