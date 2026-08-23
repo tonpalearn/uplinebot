@@ -192,27 +192,26 @@ export async function getPending(targetId: string, limit = 500): Promise<Pending
         .from("upl_group_messages")
         .select("id", { count: "exact", head: true })
         .eq("target_id", targetId);
-    // ยิงซ้ำด้วย query เดิมเป๊ะ ๆ แล้วดูของดิบ — แยกให้ออกว่า data เป็น [] หรือเป็น null
-    const again = await (supabase as any)
-      .from("upl_group_messages")
-      .select("id, display_name, text, sent_at")
-      .eq("target_id", targetId)
-      .eq("summarized", false)
-      .order("sent_at", { ascending: true })
-      .limit(limit);
-    const one = await (supabase as any)
-      .from("upl_group_messages")
-      .select("id")
-      .eq("target_id", targetId)
-      .limit(3);
+    // แยกทีละตัวแปรว่าอะไรทำให้ GET คืน 0 แถว ทั้งที่นับได้ 7
+    const g = async (sel: string, opts: { summ?: boolean; ord?: boolean; lim?: number } = {}) => {
+      let q: any = (supabase as any).from("upl_group_messages").select(sel).eq("target_id", targetId);
+      if (opts.summ) q = q.eq("summarized", false);
+      if (opts.ord) q = q.order("sent_at", { ascending: true });
+      if (opts.lim !== undefined) q = q.limit(opts.lim);
+      const r = await q;
+      return r.error ? `ERR ${r.error.code}` : r.data === null ? "null" : String(r.data.length);
+    };
 
     probe = [
-      `count=${await n(t().eq("summarized", false))}`,
-      `เดิม: data=${data === null ? "null" : `[${(data as unknown[]).length}]`}`,
-      `ซ้ำ: data=${again.data === null ? "null" : `[${again.data.length}]`} err=${again.error ? `${again.error.code}/${String(again.error.message).slice(0, 60)}` : "-"}`,
-      `แค่ id: data=${one.data === null ? "null" : `[${one.data.length}]`} err=${one.error ? String(one.error.message).slice(0, 60) : "-"}`,
-      `limitค่า=${limit}`,
-    ].join(" | ");
+      `id=${await g("id")}`,
+      `id+s=${await g("id", { summ: true })}`,
+      `id+s+ord=${await g("id", { summ: true, ord: true })}`,
+      `id+s+ord+lim=${await g("id", { summ: true, ord: true, lim: limit })}`,
+      `+sent_at=${await g("id,sent_at", { summ: true, ord: true, lim: limit })}`,
+      `+display_name=${await g("id,display_name", { summ: true, ord: true, lim: limit })}`,
+      `+text=${await g("id,text", { summ: true, ord: true, lim: limit })}`,
+      `ครบ=${await g("id,display_name,text,sent_at", { summ: true, ord: true, lim: limit })}`,
+    ].join(" ");
   }
 
   return {
