@@ -215,3 +215,12 @@ describe("ส่งซ้ำไม่รู้จบ — ปิดทางไ�
     expect(fn.slice(0, 800)).toContain("updated !== ids.length");
   });
 });
+
+describe("ตัวเชื่อมฐานข้อมูลต้องอ่านของสด", () => {
+  it("ปิดแคช fetch ของ Next.js ไว้ชัดเจน", async () => {
+    // Next.js บน Vercel แคชผล fetch ให้เองโดยปริยาย และ supabase-js เรียกผ่าน fetch
+    // ผลคือ query เดิมคืนคำตอบเก่าค้าง — เคยทำให้สรุปกลุ่มถูกส่งซ้ำทุกนาทีไม่หยุด
+    const src = await import("node:fs").then((fs) => fs.readFileSync("lib/db.ts", "utf8"));
+    expect(src).toContain('cache: "no-store"');
+  });
+});
