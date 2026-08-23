@@ -161,65 +161,33 @@ export interface PendingMessages {
   ids: number[];
   firstAt: string | null;
   lastAt: string | null;
-  /** ร่องรอยการอ่านจริง — ใช้ตอบว่า "อ่านได้ 0 แถวเพราะไม่มีข้อมูล หรือเพราะอ่านไม่ผ่าน" */
-  probe?: string;
 }
 
-/** ข้อความที่ยังไม่ถูกสรุป */
+/**
+ * ข้อความที่ยังไม่ถูกสรุป
+ *
+ * อ่านผ่านฟังก์ชัน SQL (upl_watch_pending) ไม่ใช่ select หลายคอลัมน์ผ่าน REST — เพราะแบบหลัง
+ * เคยคืน **0 แถวเงียบ ๆ โดยไม่ error** ทั้งที่นับด้วยเงื่อนไขเดียวกันได้ 7 แถว
+ * (ขอทีละคอลัมน์ได้ครบทุกคอลัมน์ แต่ขอ id+display_name+text+sent_at พร้อมกันได้ศูนย์)
+ * ผลคือกลุ่มที่มีข้อความค้างจริงไม่เคยถูกสรุป และไม่มีร่องรอยให้ไล่
+ *
+ * รูปแบบผลลัพธ์ถูกกำหนดตายตัวใน migration 0020 จึงไม่ขึ้นกับการแปลง select ของชั้น REST อีก
+ */
 export async function getPending(targetId: string, limit = 500): Promise<PendingMessages> {
   const supabase = getServiceClient();
-  const { data, error } = await supabase
-    .from("upl_group_messages")
-    .select("id, display_name, text, sent_at")
-    .eq("target_id", targetId)
-    .eq("summarized", false)
-    .order("sent_at", { ascending: true })
-    .limit(limit);
+  const { data, error } = await supabase.rpc("upl_watch_pending", {
+    p_target: targetId,
+    p_limit: limit,
+  });
 
   if (error) throw new Error(`Failed to read pending messages for ${targetId}: ${error.message}`);
   const rows = (data ?? []) as { id: number; display_name: string | null; text: string; sent_at: string }[];
-
-  // อ่านได้ 0 แถวเป็นได้ทั้ง "ไม่มีข้อความค้าง" (ปกติ) และ "อ่านไม่ถึงข้อมูล" (บั๊ก)
-  // สองอย่างนี้ต้องแยกออกจากกันได้โดยไม่ต้องเดา จึงนับซ้ำแบบไม่กรอง summarized ตอนได้ 0
-  let probe: string | undefined;
-  if (rows.length === 0) {
-    const n = async (b: any) => {
-      const { count, error: e } = await b;
-      return e ? `err:${e.code ?? ""}${e.message?.slice(0, 40) ?? ""}` : String(count ?? "?");
-    };
-    const t = (): any =>
-      (supabase as any)
-        .from("upl_group_messages")
-        .select("id", { count: "exact", head: true })
-        .eq("target_id", targetId);
-    // แยกทีละตัวแปรว่าอะไรทำให้ GET คืน 0 แถว ทั้งที่นับได้ 7
-    const g = async (sel: string, opts: { summ?: boolean; ord?: boolean; lim?: number } = {}) => {
-      let q: any = (supabase as any).from("upl_group_messages").select(sel).eq("target_id", targetId);
-      if (opts.summ) q = q.eq("summarized", false);
-      if (opts.ord) q = q.order("sent_at", { ascending: true });
-      if (opts.lim !== undefined) q = q.limit(opts.lim);
-      const r = await q;
-      return r.error ? `ERR ${r.error.code}` : r.data === null ? "null" : String(r.data.length);
-    };
-
-    probe = [
-      `id=${await g("id")}`,
-      `id+s=${await g("id", { summ: true })}`,
-      `id+s+ord=${await g("id", { summ: true, ord: true })}`,
-      `id+s+ord+lim=${await g("id", { summ: true, ord: true, lim: limit })}`,
-      `+sent_at=${await g("id,sent_at", { summ: true, ord: true, lim: limit })}`,
-      `+display_name=${await g("id,display_name", { summ: true, ord: true, lim: limit })}`,
-      `+text=${await g("id,text", { summ: true, ord: true, lim: limit })}`,
-      `ครบ=${await g("id,display_name,text,sent_at", { summ: true, ord: true, lim: limit })}`,
-    ].join(" ");
-  }
 
   return {
     lines: rows.map((r) => ({ name: r.display_name, text: r.text })),
     ids: rows.map((r) => r.id),
     firstAt: rows[0]?.sent_at ?? null,
     lastAt: rows[rows.length - 1]?.sent_at ?? null,
-    probe,
   };
 }
 
