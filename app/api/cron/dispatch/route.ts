@@ -41,7 +41,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // (ตัวหลังสำคัญกว่า — ถ้ารอบนี้ไม่ทำงาน บทสนทนาของคนอื่นจะค้างในระบบไปเรื่อย ๆ)
     const watch = await runGroupWatchCron(now);
     // บันทึกชีพจร — ทำให้ /api/health ตอบได้ว่า "pg_cron ยังเดินอยู่ไหม" โดยไม่ต้องเดา
-    await recordCronTick({ jobs, reminders, watch });
+    await recordCronTick({
+      commit: (process.env.VERCEL_GIT_COMMIT_SHA ?? "").slice(0, 7) || null,
+      jobs,
+      reminders,
+      watch,
+    });
     return NextResponse.json({ ok: true, jobs, reminders, watch });
   } catch (err) {
     return NextResponse.json(

@@ -70,10 +70,15 @@ export interface WatchCronResult {
   summarized: number;
   purged: number;
   errors: string[];
+  /**
+   * เหตุผลการตัดสินใจของแต่ละกลุ่มในรอบนี้ — ตอบคำถาม "ทำไมกลุ่มนี้ไม่ได้สรุป"
+   * โดยไม่ต้องไล่โค้ดหรือเดา. เก็บเฉพาะค่าที่ใช้ตัดสินจริง ไม่มีเนื้อหาบทสนทนา
+   */
+  decisions: string[];
 }
 
 export async function runGroupWatchCron(now = new Date()): Promise<WatchCronResult> {
-  const result: WatchCronResult = { checked: 0, summarized: 0, purged: 0, errors: [] };
+  const result: WatchCronResult = { checked: 0, summarized: 0, purged: 0, errors: [], decisions: [] };
 
   let watches: WatchConfig[];
   try {
@@ -96,7 +101,13 @@ export async function runGroupWatchCron(now = new Date()): Promise<WatchCronResu
     // 2) ถึงรอบสรุปหรือยัง
     try {
       const last = await lastReportAt(cfg.targetId);
-      if (!isDue(cfg, last, now)) continue;
+      const tag = cfg.targetId.slice(0, 8);
+      if (!isDue(cfg, last, now)) {
+        result.decisions.push(
+          `${tag}: ยังไม่ถึงรอบ (${cfg.scheduleKind}/${cfg.intervalMinutes}น. last=${last ? last.toISOString() : "ไม่เคย"})`
+        );
+        continue;
+      }
 
       const botId = await botIdForTarget(cfg.targetId);
       if (!botId) {
@@ -104,8 +115,11 @@ export async function runGroupWatchCron(now = new Date()): Promise<WatchCronResu
         continue;
       }
 
-      const r = await runSummary(cfg, botId, `กลุ่ม ${cfg.targetId.slice(0, 8)}`, "scheduled");
+      const r = await runSummary(cfg, botId, `กลุ่ม ${tag}`, "scheduled");
       if (r.delivered) result.summarized += 1;
+      result.decisions.push(
+        `${tag}: ถึงรอบ pending=${r.count} ขั้นต่ำ=${cfg.minMessages} ส่ง=${r.delivered ? "สำเร็จ" : "ไม่สำเร็จ"}`
+      );
       // ส่งไม่ออกทั้งที่ถึงรอบแล้ว = ต้องดังพอให้เห็นใน /api/health ไม่ใช่หายเงียบ
       // (นี่คืออาการที่ทำให้ "ตั้งเวลาแล้วสรุปไม่มา" ไล่หาสาเหตุไม่ได้)
       for (const f of r.failures) {
