@@ -160,6 +160,8 @@ export interface PendingMessages {
   ids: number[];
   firstAt: string | null;
   lastAt: string | null;
+  /** ร่องรอยการอ่านจริง — ใช้ตอบว่า "อ่านได้ 0 แถวเพราะไม่มีข้อมูล หรือเพราะอ่านไม่ผ่าน" */
+  probe?: string;
 }
 
 /** ข้อความที่ยังไม่ถูกสรุป */
@@ -176,11 +178,23 @@ export async function getPending(targetId: string, limit = 500): Promise<Pending
   if (error) throw new Error(`Failed to read pending messages for ${targetId}: ${error.message}`);
   const rows = (data ?? []) as { id: number; display_name: string | null; text: string; sent_at: string }[];
 
+  // อ่านได้ 0 แถวเป็นได้ทั้ง "ไม่มีข้อความค้าง" (ปกติ) และ "อ่านไม่ถึงข้อมูล" (บั๊ก)
+  // สองอย่างนี้ต้องแยกออกจากกันได้โดยไม่ต้องเดา จึงนับซ้ำแบบไม่กรอง summarized ตอนได้ 0
+  let probe: string | undefined;
+  if (rows.length === 0) {
+    const { count } = await supabase
+      .from("upl_group_messages")
+      .select("id", { count: "exact", head: true })
+      .eq("target_id", targetId);
+    probe = `อ่านได้ 0 แถว (ทั้งกลุ่มมี ${count ?? "?"} แถว)`;
+  }
+
   return {
     lines: rows.map((r) => ({ name: r.display_name, text: r.text })),
     ids: rows.map((r) => r.id),
     firstAt: rows[0]?.sent_at ?? null,
     lastAt: rows[rows.length - 1]?.sent_at ?? null,
+    probe,
   };
 }
 

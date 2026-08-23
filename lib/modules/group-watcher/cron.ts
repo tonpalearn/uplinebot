@@ -118,7 +118,8 @@ export async function runGroupWatchCron(now = new Date()): Promise<WatchCronResu
       const r = await runSummary(cfg, botId, `กลุ่ม ${tag}`, "scheduled");
       if (r.delivered) result.summarized += 1;
       result.decisions.push(
-        `${tag}: ถึงรอบ pending=${r.count} ขั้นต่ำ=${cfg.minMessages} ส่ง=${r.delivered ? "สำเร็จ" : "ไม่สำเร็จ"}`
+        `${tag}: ถึงรอบ pending=${r.count} ขั้นต่ำ=${cfg.minMessages} ส่ง=${r.delivered ? "สำเร็จ" : "ไม่สำเร็จ"}` +
+          (r.failures.length ? ` | ${r.failures.join(" ; ")}` : "")
       );
       // ส่งไม่ออกทั้งที่ถึงรอบแล้ว = ต้องดังพอให้เห็นใน /api/health ไม่ใช่หายเงียบ
       // (นี่คืออาการที่ทำให้ "ตั้งเวลาแล้วสรุปไม่มา" ไล่หาสาเหตุไม่ได้)

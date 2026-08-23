@@ -118,7 +118,9 @@ export async function runSummary(
   triggeredBy: string | null = null
 ): Promise<{ delivered: boolean; count: number; summary: WatchSummary | null; failures: string[] }> {
   const pending = await getPending(cfg.targetId);
-  if (pending.ids.length === 0) return { delivered: false, count: 0, summary: null, failures: [] };
+  if (pending.ids.length === 0) {
+    return { delivered: false, count: 0, summary: null, failures: pending.probe ? [pending.probe] : [] };
+  }
 
   // รอบตามเวลา: ข้อความน้อยเกินเกณฑ์ = ไม่รบกวน (คำสำคัญ/สั่งเองไม่ติดเงื่อนไขนี้)
   if (kind === "scheduled" && pending.ids.length < cfg.minMessages) {
