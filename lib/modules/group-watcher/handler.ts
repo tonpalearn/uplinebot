@@ -60,28 +60,53 @@ function periodLabel(firstAt: string | null, lastAt: string | null): string {
   return firstAt === lastAt ? fmt(firstAt) : `${fmt(firstAt)}–${fmt(lastAt)} น.`;
 }
 
+export interface DeliveryResult {
+  /** คำอธิบายปลายทางที่ส่งสำเร็จ — null = ไม่สำเร็จสักที่ */
+  deliveredTo: string | null;
+  /** เหตุผลที่ปลายทางแต่ละอันพลาด เช่น 'แชทส่วนตัว: 403 …' — ว่าง = ไม่มีอันไหนพลาด */
+  failures: string[];
+}
+
 /**
- * ส่งสรุปไปยังปลายทางที่ตั้งไว้ — คืนคำอธิบายปลายทางแบบอ่านออก (ไว้ลง log)
- * ส่งไม่ออกสักที่ = คืน null เพื่อให้ผู้เรียก "ไม่ mark ว่าสรุปแล้ว" (ข้อความจะถูกสรุปรอบหน้า)
+ * ส่งสรุปไปยังปลายทางที่ตั้งไว้
+ *
+ * ส่งไม่ออกสักที่ = deliveredTo เป็น null เพื่อให้ผู้เรียก "ไม่ mark ว่าสรุปแล้ว"
+ * (ข้อความจะถูกสรุปรอบหน้าแทนที่จะหายเงียบ)
+ *
+ * **ต้องคืนเหตุผลที่พลาดออกมาด้วยเสมอ** — ของเดิมเช็คแค่ r.ok แล้วทิ้ง status/body ของ LINE ทิ้ง
+ * ผลคือเวลาสรุปไม่ถึงมือ อาการที่เห็นคือ "เงียบ" เหมือนกันหมด ไม่ว่าจะเพราะยังไม่ได้แอดเพื่อน
+ * โควตาหมด โทเคนหมดอายุ หรือการ์ดผิดรูปแบบ — แยกไม่ออกจนกว่าจะไปนั่งเดา
  */
 export async function deliverSummary(
   cfg: WatchConfig,
   botId: string,
   card: OutboundMessage
-): Promise<string | null> {
+): Promise<DeliveryResult> {
   const token = await getBotAccessToken(botId);
   const sent: string[] = [];
+  const failures: string[] = [];
 
-  if (cfg.reportToUser) {
-    const r = await pushMessage(token, cfg.reportToUser, [card]);
-    if (r.ok) sent.push("แชทส่วนตัว");
-  }
-  if (cfg.reportToTarget) {
-    const r = await pushMessage(token, cfg.reportToTarget, [card]);
-    if (r.ok) sent.push("กลุ่มปลายทาง");
+  const send = async (to: string, label: string) => {
+    const r = await pushMessage(token, to, [card]);
+    if (r.ok) {
+      sent.push(label);
+      return;
+    }
+    // เก็บข้อความจาก LINE ไว้สั้น ๆ พอให้บอกได้ว่าเป็นปัญหาอะไร โดยไม่ทำให้ log บวม
+    const detail =
+      typeof r.body === "object" && r.body !== null && "message" in r.body
+        ? String((r.body as { message: unknown }).message).slice(0, 120)
+        : "";
+    failures.push(`${label}: HTTP ${r.status}${detail ? ` — ${detail}` : ""}`);
+  };
+
+  if (cfg.reportToUser) await send(cfg.reportToUser, "แชทส่วนตัว");
+  if (cfg.reportToTarget) await send(cfg.reportToTarget, "กลุ่มปลายทาง");
+  if (!cfg.reportToUser && !cfg.reportToTarget) {
+    failures.push("ยังไม่ได้ตั้งปลายทาง (พิมพ์ 'ส่งสรุปให้ผม' หรือ 'ส่งสรุปที่นี่')");
   }
 
-  return sent.length > 0 ? sent.join(" + ") : null;
+  return { deliveredTo: sent.length > 0 ? sent.join(" + ") : null, failures };
 }
 
 /** สร้างสรุป + ส่ง + บันทึก — ใช้ร่วมกันระหว่างคำสั่ง "สรุปตอนนี้", คำสำคัญ, และ cron */
@@ -91,13 +116,13 @@ export async function runSummary(
   groupName: string,
   kind: "scheduled" | "keyword" | "manual",
   triggeredBy: string | null = null
-): Promise<{ delivered: boolean; count: number; summary: WatchSummary | null }> {
+): Promise<{ delivered: boolean; count: number; summary: WatchSummary | null; failures: string[] }> {
   const pending = await getPending(cfg.targetId);
-  if (pending.ids.length === 0) return { delivered: false, count: 0, summary: null };
+  if (pending.ids.length === 0) return { delivered: false, count: 0, summary: null, failures: [] };
 
   // รอบตามเวลา: ข้อความน้อยเกินเกณฑ์ = ไม่รบกวน (คำสำคัญ/สั่งเองไม่ติดเงื่อนไขนี้)
   if (kind === "scheduled" && pending.ids.length < cfg.minMessages) {
-    return { delivered: false, count: pending.ids.length, summary: null };
+    return { delivered: false, count: pending.ids.length, summary: null, failures: [] };
   }
 
   const ai = await summarizeConversation(pending.lines, { includeNames: cfg.includeNames });
@@ -112,8 +137,8 @@ export async function runSummary(
     includeNames: cfg.includeNames,
   });
 
-  const deliveredTo = await deliverSummary(cfg, botId, card);
-  if (!deliveredTo) return { delivered: false, count: pending.ids.length, summary };
+  const { deliveredTo, failures } = await deliverSummary(cfg, botId, card);
+  if (!deliveredTo) return { delivered: false, count: pending.ids.length, summary, failures };
 
   // mark หลังส่งสำเร็จเท่านั้น — ส่งไม่ออกแล้ว mark ไปแล้ว = บทสนทนาหายไปเงียบ ๆ
   await markSummarized(pending.ids);
@@ -125,7 +150,7 @@ export async function runSummary(
     deliveredTo
   );
 
-  return { delivered: true, count: pending.ids.length, summary };
+  return { delivered: true, count: pending.ids.length, summary, failures };
 }
 
 /**

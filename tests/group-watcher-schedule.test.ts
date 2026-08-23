@@ -147,3 +147,25 @@ describe("ผู้ใช้ต้องหาเจอ — ไม่ใช่�
     expect(json).toContain("◉  เช้า-เย็น 09:00 · 18:00");
   });
 });
+
+// ── ส่งไม่ออกต้องดัง ไม่ใช่เงียบ ────────────────────────────────────────────────
+describe("เวลาสรุปส่งไม่ถึงมือ ต้องบอกได้ว่าเพราะอะไร", () => {
+  it("deliverSummary คืนเหตุผลที่พลาด ไม่ใช่แค่ null", async () => {
+    const src = await import("node:fs").then((fs) =>
+      fs.readFileSync("lib/modules/group-watcher/handler.ts", "utf8")
+    );
+    // ต้องอ่าน status/body ที่ LINE ตอบมา ไม่ใช่ดูแค่ r.ok แล้วทิ้ง
+    expect(src).toContain("failures.push");
+    expect(src).toContain("HTTP ${r.status}");
+    // ไม่ได้ตั้งปลายทางเลย = คนละเรื่องกับส่งแล้วโดนปฏิเสธ ต้องแยกออกจากกัน
+    expect(src).toContain("ยังไม่ได้ตั้งปลายทาง");
+  });
+
+  it("cron ยกเหตุผลขึ้นไปที่ errors[] เพื่อให้เห็นใน /api/health", async () => {
+    const src = await import("node:fs").then((fs) =>
+      fs.readFileSync("lib/modules/group-watcher/cron.ts", "utf8")
+    );
+    expect(src).toContain("r.failures");
+    expect(src).toContain("result.errors.push");
+  });
+});

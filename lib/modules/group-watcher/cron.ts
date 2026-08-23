@@ -106,6 +106,11 @@ export async function runGroupWatchCron(now = new Date()): Promise<WatchCronResu
 
       const r = await runSummary(cfg, botId, `กลุ่ม ${cfg.targetId.slice(0, 8)}`, "scheduled");
       if (r.delivered) result.summarized += 1;
+      // ส่งไม่ออกทั้งที่ถึงรอบแล้ว = ต้องดังพอให้เห็นใน /api/health ไม่ใช่หายเงียบ
+      // (นี่คืออาการที่ทำให้ "ตั้งเวลาแล้วสรุปไม่มา" ไล่หาสาเหตุไม่ได้)
+      for (const f of r.failures) {
+        result.errors.push(`deliver ${cfg.targetId.slice(0, 8)}: ${f}`);
+      }
 
       // แตะ last_alert_at ไว้ด้วย เพื่อไม่ให้คำสำคัญเด้งซ้ำทันทีหลังเพิ่งส่งสรุปรอบไป
       if (r.delivered) {
