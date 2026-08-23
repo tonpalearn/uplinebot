@@ -234,3 +234,19 @@ describe("การ์ด — ความโปร่งใสต่อคน�
     expect(flat(body[0])).toContain("ควรรีบดู");
   });
 });
+
+// ── 6. ช่องโหว่ที่เจอตอนเตรียมทดสอบจริง ────────────────────────────────────────
+describe("การเก็บบทสนทนาต้องหยุดเมื่อหมดสิทธิ์โมดูล", () => {
+  it("captureIfWatched มีการเช็คสิทธิ์อยู่จริง (ไม่ได้พึ่ง router)", async () => {
+    // เส้นทางนี้ถูกเรียกจาก webhook ตรง ๆ ไม่ผ่าน Command Router จึงไม่ได้รับการกรองสิทธิ์
+    // อัตโนมัติ — ถ้าลูกค้าเลิกใช้โมดูลแต่ config ยังค้าง บอทต้องหยุดเก็บทันที
+    const src = await import("node:fs").then((fs) =>
+      fs.readFileSync("lib/modules/group-watcher/handler.ts", "utf8")
+    );
+    expect(src).toContain('isModuleEntitled(ctx.tenantId, "group_watcher")');
+    // และต้องเช็ค "ก่อน" เรียก captureMessage เสมอ
+    expect(src.indexOf('isModuleEntitled(ctx.tenantId, "group_watcher")')).toBeLessThan(
+      src.indexOf("await captureMessage(")
+    );
+  });
+});

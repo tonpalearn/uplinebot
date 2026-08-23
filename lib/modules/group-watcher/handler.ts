@@ -24,15 +24,19 @@ import {
 } from "./flex";
 import { pushMessage } from "../../line/client";
 import { getBotAccessToken } from "../../line/token";
+import { isModuleEntitled } from "../../entitlement";
 
 /**
  * ผู้ช่วยเฝ้ากลุ่ม (module_key: group_watcher) — โมดูลที่ 17.
  *
- * ต่างจากโมดูลอื่นตรงที่ **ข้อความส่วนใหญ่ที่ผ่านมาไม่ใช่คำสั่ง** แต่คือบทสนทนาที่ต้องเก็บ
- * ไว้สรุป. matchesIntent จึงคืน true กับข้อความตัวอักษรในกลุ่มทุกอัน (เมื่อเปิดใช้งาน)
- * แล้ว handleEvent เป็นคนแยกว่า "คำสั่ง → ตอบ" หรือ "บทสนทนา → เก็บเงียบ ๆ คืน []"
+ * แยกเป็น **2 เส้นทาง** โดยตั้งใจ:
+ *   1. คำสั่ง (เฝ้ากลุ่มนี้ / สรุปตอนนี้ / เฝ้าอะไรอยู่ …) → ผ่าน Command Router ตามปกติ
+ *      matchesIntent จึงรับ **เฉพาะคำสั่งของตัวเอง**
+ *   2. การเก็บบทสนทนา → `captureIfWatched()` ที่ webhook เรียก **ก่อน** เข้า router
  *
- * ⚠️ อยู่ท้าย ROUTER_PRIORITY (ก่อน faq เท่านั้น) — ถ้าอยู่ต้น มันจะกลืนคำสั่งของทุกโมดูล
+ * ทำไมต้องแยก: router เป็น first-match-wins — ถ้าโมดูลนี้รับ "ข้อความทุกอัน" เพื่อจะเก็บ
+ * บทสนทนา มันจะกลืนคำสั่งของ FAQ (exact_trigger เปิด default) และทุกโมดูลที่อยู่หลังมันทันที
+ * การเฝ้าคือ "การสังเกตข้าง ๆ" ไม่ใช่การรับงาน จึงไม่ควรอยู่ใน router ตั้งแต่แรก
  *
  * กติกาความเป็นส่วนตัวที่บังคับในโค้ดนี้:
  *   • เก็บเฉพาะ event ที่เป็น "ข้อความตัวอักษรในกลุ่ม" — รูป/ไฟล์/เสียง/สติกเกอร์ ไม่แตะ
@@ -279,6 +283,11 @@ export async function captureIfWatched(event: LineEvent, ctx: TenantContext): Pr
 
     const cfg = await getWatchConfig(ctx.targetId);
     if (!cfg || !cfg.active) return;
+
+    // ⚠️ ต้องเช็คสิทธิ์ที่นี่ด้วย — เส้นทางนี้ไม่ได้ผ่าน Command Router จึงไม่ได้รับการกรอง
+    // สิทธิ์อัตโนมัติเหมือนคำสั่ง. ถ้าลูกค้าเลิกใช้โมดูล (enabled=false) แต่ config ยังค้างอยู่
+    // บอทจะเก็บบทสนทนาของคนในกลุ่มต่อไปเรื่อย ๆ ทั้งที่ไม่มีสิทธิ์แล้ว — ยอมไม่ได้
+    if (!(await isModuleEntitled(ctx.tenantId, "group_watcher"))) return;
 
     // คำสั่งของโมดูลเองไม่ต้องเก็บเป็นบทสนทนา (ไม่งั้นสรุปจะเต็มไปด้วยคำสั่งตั้งค่า)
     if (parseWatchIntent(text) !== null) return;
