@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { dispatchDueJobs } from "@/lib/scheduler/dispatcher";
 import { scanTodoReminders } from "@/lib/reminders";
 import { runGroupWatchCron } from "@/lib/modules/group-watcher/cron";
+import { recordCronTick } from "@/lib/scheduler/heartbeat";
 
 // Never prerender/cache — invoked on a schedule and must run live per request.
 export const dynamic = "force-dynamic";
@@ -39,6 +40,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // ผู้ช่วยเฝ้ากลุ่ม: สรุปกลุ่มที่ถึงรอบ + **ลบข้อความที่เก็บเกินกำหนด**
     // (ตัวหลังสำคัญกว่า — ถ้ารอบนี้ไม่ทำงาน บทสนทนาของคนอื่นจะค้างในระบบไปเรื่อย ๆ)
     const watch = await runGroupWatchCron(now);
+    // บันทึกชีพจร — ทำให้ /api/health ตอบได้ว่า "pg_cron ยังเดินอยู่ไหม" โดยไม่ต้องเดา
+    await recordCronTick({ jobs, reminders, watch });
     return NextResponse.json({ ok: true, jobs, reminders, watch });
   } catch (err) {
     return NextResponse.json(

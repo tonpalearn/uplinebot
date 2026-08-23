@@ -267,6 +267,20 @@ export async function logReport(
   if (error) throw new Error(`Failed to log watch report: ${error.message}`);
 }
 
+/** เวลาที่ส่งรายงานล่าสุดของกลุ่มนั้น — ใช้ตัดสินว่าครบรอบหรือยัง และบอก "รอบหน้ากี่โมง" */
+export async function lastReportAt(targetId: string): Promise<Date | null> {
+  const supabase = getServiceClient();
+  const { data, error } = await supabase
+    .from("upl_watch_reports")
+    .select("created_at")
+    .eq("target_id", targetId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to read last report for ${targetId}: ${error.message}`);
+  return data ? new Date(data.created_at as string) : null;
+}
+
 /** ทุกกลุ่มที่เปิดเฝ้าอยู่ — ใช้โดย cron */
 export async function listActiveWatches(): Promise<WatchConfig[]> {
   const supabase = getServiceClient();

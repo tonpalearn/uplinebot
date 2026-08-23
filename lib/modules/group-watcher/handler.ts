@@ -9,6 +9,7 @@ import {
   markSummarized,
   setOptOut,
   countOptOuts,
+  lastReportAt,
   logReport,
   type WatchConfig,
 } from "./store";
@@ -16,7 +17,7 @@ import { summarizeConversation, fallbackSummary, type WatchSummary } from "./sum
 import {
   buildSummaryCard,
   buildStatusText,
-  buildStartedText,
+  buildScheduleCard,
   buildStoppedText,
   buildOptOutText,
   buildNoNewsText,
@@ -25,6 +26,7 @@ import {
 import { pushMessage } from "../../line/client";
 import { getBotAccessToken } from "../../line/token";
 import { isModuleEntitled } from "../../entitlement";
+import { describeSchedule, nextReportLabel } from "./schedule";
 
 /**
  * ผู้ช่วยเฝ้ากลุ่ม (module_key: group_watcher) — โมดูลที่ 17.
@@ -126,6 +128,25 @@ export async function runSummary(
   return { delivered: true, count: pending.ids.length, summary };
 }
 
+/**
+ * ข้อความยืนยันหลังตั้งรอบ — ต้องตอบคำถามที่คนถามจริง ๆ คือ "แล้วสรุปจะมาตอนไหน"
+ * ของเดิมตอบแค่ "ตั้งแล้ว" ซึ่งทำให้ไม่มีใครรู้ว่ามันทำงานหรือเปล่าจนกว่าจะรอทั้งวัน
+ */
+function scheduleConfirm(cfg: WatchConfig, last: Date | null): OutboundMessage {
+  const next = nextReportLabel(cfg, last, new Date());
+  return {
+    type: "text",
+    text: [
+      `🕒 ตั้งรอบสรุปเป็น "${describeSchedule(cfg)}" แล้ว`,
+      next ? `รายงานถัดไป ~${next}` : null,
+      "",
+      "อยากสรุปเดี๋ยวนี้เลย พิมพ์: สรุปตอนนี้",
+    ]
+      .filter((l) => l !== null)
+      .join("\n"),
+  };
+}
+
 export const GroupWatcherModule: ModuleHandler = {
   key: "group_watcher",
 
@@ -156,8 +177,17 @@ export const GroupWatcherModule: ModuleHandler = {
           { type: "text", text: "คำสั่งนี้ใช้ในกลุ่มเท่านั้น — เชิญบอทเข้ากลุ่มแล้วพิมพ์ 'เฝ้ากลุ่มนี้' ในกลุ่มนั้น" },
         ];
       }
-      await startWatch(ctx.targetId, ctx.tenantId, lineUserId);
-      return [buildStartedText(groupName)];
+      const started = await startWatch(ctx.targetId, ctx.tenantId, lineUserId);
+      // การ์ดนี้ทำ 2 หน้าที่พร้อมกัน: ประกาศตัวให้คนในกลุ่มรู้ + โชว์รอบรายงานให้ตั้งได้ทันที
+      // ของเดิมเป็นข้อความล้วนที่ไม่พูดถึงรอบเลย คนเปิดใช้จึงไม่มีทางรู้ว่าตั้งความถี่ได้
+      return [
+        buildScheduleCard({
+          cfg: started,
+          groupName,
+          nextLabel: nextReportLabel(started, null, new Date()),
+          justStarted: true,
+        }),
+      ];
     }
 
     const cfg = await getWatchConfig(ctx.targetId);
@@ -180,6 +210,16 @@ export const GroupWatcherModule: ModuleHandler = {
       return [];
     }
 
+    if (intent?.action === "schedule_menu") {
+      return [
+        buildScheduleCard({
+          cfg,
+          groupName,
+          nextLabel: nextReportLabel(cfg, await lastReportAt(ctx.targetId), new Date()),
+        }),
+      ];
+    }
+
     if (intent?.action === "watch_stop") {
       await updateWatchConfig(ctx.targetId, { active: false });
       return [buildStoppedText()];
@@ -190,9 +230,8 @@ export const GroupWatcherModule: ModuleHandler = {
         scheduleKind: "interval",
         intervalMinutes: intent.minutes,
       });
-      const label =
-        intent.minutes >= 60 ? `${Math.round(intent.minutes / 60)} ชั่วโมง` : `${intent.minutes} นาที`;
-      return [{ type: "text", text: `🕒 ตั้งรอบสรุปเป็นทุก ${label} แล้ว` }];
+      const next = { ...cfg, scheduleKind: "interval" as const, intervalMinutes: intent.minutes };
+      return [scheduleConfirm(next, await lastReportAt(ctx.targetId))];
     }
 
     if (intent?.action === "set_times") {
@@ -200,7 +239,8 @@ export const GroupWatcherModule: ModuleHandler = {
         scheduleKind: "times",
         reportTimes: intent.times.join(","),
       });
-      return [{ type: "text", text: `🕒 จะสรุปให้เวลา ${intent.times.join(", ")} น. ทุกวัน` }];
+      const next = { ...cfg, scheduleKind: "times" as const, reportTimes: intent.times.join(",") };
+      return [scheduleConfirm(next, await lastReportAt(ctx.targetId))];
     }
 
     if (intent?.action === "set_keywords") {

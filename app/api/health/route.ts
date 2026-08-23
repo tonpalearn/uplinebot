@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isGeminiEnabled, geminiModel, geminiKeySource } from "@/lib/ai/gemini";
+import { readCronHealth } from "@/lib/scheduler/heartbeat";
 
 /**
  * Health check — บอกว่า "ตั้งค่าอะไรไว้บ้าง" โดยไม่เปิดเผยค่าลับใด ๆ.
@@ -21,8 +22,12 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  // ชีพจร cron — คำถาม "ตั้งเวลาแล้วทำไมไม่มา" ตอบได้ที่นี่ ไม่ต้องไล่โค้ด
+  const cron = await readCronHealth();
+
   return NextResponse.json({
     ok: true,
+    cron,
     ai: {
       /** true = มี GEMINI_API_KEY ใน env ของ deployment นี้ (ยังไม่ได้แปลว่าโควตายังเหลือ) */
       configured: isGeminiEnabled(),

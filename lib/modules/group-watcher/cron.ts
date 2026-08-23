@@ -1,4 +1,4 @@
-import { listActiveWatches, purgeOldMessages, updateWatchConfig, type WatchConfig } from "./store";
+import { listActiveWatches, purgeOldMessages, updateWatchConfig, lastReportAt, type WatchConfig } from "./store";
 import { runSummary } from "./handler";
 import { getServiceClient } from "../../db";
 
@@ -51,20 +51,6 @@ export function isDue(cfg: WatchConfig, lastReportAt: Date | null, now: Date, wi
     return true;
   }
   return false;
-}
-
-/** เวลาที่ส่งรายงานล่าสุดของกลุ่มนั้น (ใช้ตัดสินว่าครบรอบหรือยัง) */
-async function lastReportAt(targetId: string): Promise<Date | null> {
-  const supabase = getServiceClient();
-  const { data, error } = await supabase
-    .from("upl_watch_reports")
-    .select("created_at")
-    .eq("target_id", targetId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error) throw new Error(`Failed to read last report for ${targetId}: ${error.message}`);
-  return data ? new Date(data.created_at as string) : null;
 }
 
 /** botId ของกลุ่มนั้น (targets ผูกกับ bot) */

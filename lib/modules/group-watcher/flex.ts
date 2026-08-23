@@ -3,6 +3,7 @@ import { FS, NEUTRAL, WATCH_ACCENT, gradientHeader, headerStyle, softSep } from 
 import type { WatchSummary } from "./summarize";
 import type { WatchConfig } from "./store";
 import { splitStored } from "./parse";
+import { describeSchedule, intervalLabel } from "./schedule";
 
 /**
  * การ์ดของผู้ช่วยเฝ้ากลุ่ม — โทนคราม (WATCH_ACCENT) แยกจากโมดูลอื่นได้ตั้งแต่ชายตามอง.
@@ -123,6 +124,132 @@ export function buildSummaryCard(o: SummaryCardOpts): OutboundMessage {
   };
 }
 
+
+// ── รอบรายงาน ────────────────────────────────────────────────────────────────
+/**
+ * ตัวเลือกรอบที่ "กดได้" — ปุ่มแบบ message ส่งข้อความเดิมที่ parser รับอยู่แล้ว
+ * จึงไม่ต้องมี postback handler แยก และคนที่ชอบพิมพ์เองก็ยังพิมพ์ได้เหมือนเดิม
+ *
+ * ที่ต้องมีปุ่ม เพราะของเดิมมีแต่คำสั่งพิมพ์ล้วน — คนเปิดใช้แล้วไม่มีทางรู้เลยว่าตั้งรอบได้
+ */
+const PRESETS: { label: string; cmd: string }[] = [
+  { label: "ทุก 1 ชม.", cmd: "ทุก 1 ชม." },
+  { label: "ทุก 4 ชม.", cmd: "ทุก 4 ชม." },
+  { label: "เช้า-เย็น 09:00 · 18:00", cmd: "เวลา 09:00, 18:00" },
+  { label: "วันละครั้ง 18:00", cmd: "เวลา 18:00" },
+];
+
+function presetRow(p: { label: string; cmd: string }, active: boolean): Record<string, unknown> {
+  return {
+    type: "box",
+    layout: "horizontal",
+    action: { type: "message", label: p.label, text: p.cmd },
+    backgroundColor: active ? WATCH_ACCENT.chipBg : "#F8FAFC",
+    cornerRadius: "10px",
+    paddingAll: "12px",
+    margin: "sm",
+    contents: [
+      {
+        type: "text",
+        text: (active ? "◉  " : "○  ") + p.label,
+        size: FS.body,
+        color: active ? WATCH_ACCENT.chipText : NEUTRAL.text,
+        weight: active ? "bold" : "regular",
+        flex: 1,
+        wrap: true,
+      },
+    ],
+  };
+}
+
+/** ตอนนี้ตั้งไว้ตรงกับ preset ไหน (ไว้ทำเครื่องหมาย ◉) */
+function activeCmd(cfg: WatchConfig): string | null {
+  // preset เขียนย่อว่า "ชม." ส่วน label เต็มใช้ "ชั่วโมง" — เทียบกันได้ต้องปรับให้ตรงรูปแบบเดียว
+  if (cfg.scheduleKind === "interval") return intervalLabel(cfg.intervalMinutes).replace(" ชั่วโมง", " ชม.");
+  if (cfg.scheduleKind === "times") {
+    const t = splitStored(cfg.reportTimes);
+    return t.length ? `เวลา ${t.join(", ")}` : null;
+  }
+  return null;
+}
+
+export interface ScheduleCardOpts {
+  cfg: WatchConfig;
+  groupName: string;
+  /** "14:30 น. (อีก 2 ชม.)" — null ถ้าไม่สรุปตามเวลา */
+  nextLabel: string | null;
+  /** true = เพิ่งเปิดเฝ้า (การ์ดนี้ทำหน้าที่ประกาศตัวให้คนในกลุ่มด้วย) */
+  justStarted?: boolean;
+}
+
+export function buildScheduleCard(o: ScheduleCardOpts): OutboundMessage {
+  const active = activeCmd(o.cfg);
+  const body: Record<string, unknown>[] = [
+    {
+      type: "box",
+      layout: "vertical",
+      backgroundColor: WATCH_ACCENT.chipBg,
+      cornerRadius: "10px",
+      paddingAll: "14px",
+      contents: [
+        { type: "text", text: "รอบรายงานตอนนี้", size: FS.caption, color: WATCH_ACCENT.chipText },
+        {
+          type: "text",
+          text: describeSchedule(o.cfg),
+          size: FS.section,
+          weight: "bold",
+          color: WATCH_ACCENT.chipText,
+          wrap: true,
+          margin: "xs",
+        },
+        ...(o.nextLabel
+          ? [{ type: "text", text: `รายงานถัดไป ~${o.nextLabel}`, size: FS.caption, color: WATCH_ACCENT.chipText, margin: "sm", wrap: true }]
+          : []),
+      ],
+    },
+    { type: "text", text: "แตะเพื่อเปลี่ยนรอบ", size: FS.label, weight: "bold", color: NEUTRAL.text, margin: "lg" },
+    ...PRESETS.map((p) => presetRow(p, active === p.cmd)),
+    softSep("lg"),
+    {
+      type: "text",
+      text: "หรือพิมพ์เองได้: ทุก 30 นาที · ทุก 2 ชม. · เวลา 08:30, 12:00, 17:00\n(รับตั้งแต่ 15 นาที ถึง 24 ชม.)",
+      size: FS.caption,
+      color: NEUTRAL.muted,
+      wrap: true,
+      margin: "md",
+    },
+  ];
+
+  if (o.justStarted) {
+    body.push(softSep("lg"), {
+      type: "text",
+      text: "แจ้งทุกคนในกลุ่ม: บอทอ่านเฉพาะข้อความตัวอักษรเพื่อทำสรุปประเด็น ไม่เก็บรูป/ไฟล์/เสียง · ไม่ระบุชื่อผู้พูด · ลบอัตโนมัติใน 3 วัน\nพิมพ์ 'เฝ้าอะไรอยู่' ดูรายละเอียด · 'ไม่สรุปข้อความผม' เพื่อขอไม่ถูกสรุป",
+      size: FS.caption,
+      color: NEUTRAL.muted,
+      wrap: true,
+      margin: "md",
+    });
+  }
+
+  return {
+    type: "flex",
+    altText: o.justStarted
+      ? `เริ่มสรุปกลุ่มนี้แล้ว — ${describeSchedule(o.cfg)}`
+      : `รอบรายงาน: ${describeSchedule(o.cfg)}`,
+    contents: {
+      type: "bubble",
+      header: gradientHeader({
+        accent: WATCH_ACCENT,
+        eyebrow: o.justStarted ? "🔍 เริ่มสรุปกลุ่มนี้แล้ว" : "🕒 รอบรายงาน",
+        title: short(o.groupName),
+        subtitle: o.justStarted ? "ตั้งรอบได้เลย หรือปล่อยเป็นค่าเริ่มต้น" : "เลือกความถี่ที่ต้องการ",
+      }),
+      body: { type: "box", layout: "vertical", paddingAll: "20px", paddingTop: "14px", spacing: "none", contents: body },
+      styles: { header: headerStyle(WATCH_ACCENT) },
+    },
+  };
+}
+
 /** สถานะ — ใครก็ในกลุ่มขอดูได้ ต้องบอกครบว่าเก็บอะไร ส่งให้ใคร เก็บนานแค่ไหน */
 export function buildStatusText(
   cfg: WatchConfig | null,
@@ -146,14 +273,7 @@ export function buildStatusText(
   if (cfg.reportToTarget) dest.push("กลุ่มที่กำหนดไว้");
   if (dest.length === 0) dest.push("(ยังไม่ได้ตั้งปลายทาง)");
 
-  const sched =
-    cfg.scheduleKind === "interval"
-      ? cfg.intervalMinutes >= 60
-        ? `ทุก ${Math.round(cfg.intervalMinutes / 60)} ชั่วโมง`
-        : `ทุก ${cfg.intervalMinutes} นาที`
-      : cfg.scheduleKind === "times"
-        ? `เวลา ${cfg.reportTimes ?? "-"}`
-        : "เฉพาะเมื่อเจอคำสำคัญ";
+  const sched = describeSchedule(cfg);
 
   const kw = splitStored(cfg.keywords);
   const urgent = splitStored(cfg.urgentKeywords);
@@ -164,7 +284,7 @@ export function buildStatusText(
       `🔍 กลุ่มนี้กำลังถูกสรุปอยู่`,
       "",
       `ส่งสรุปไปที่: ${dest.join(" + ")}`,
-      `รอบการส่ง: ${sched}`,
+      `รอบการส่ง: ${sched}  (เปลี่ยนได้ พิมพ์ "ตั้งรอบ")`,
       kw.length ? `คำสำคัญที่เฝ้า: ${kw.join(", ")}` : "คำสำคัญที่เฝ้า: —",
       urgent.length ? `คำที่ถือว่าด่วน: ${urgent.join(", ")}` : "",
       `ระบุชื่อผู้พูดในสรุป: ${cfg.includeNames ? "ระบุ" : "ไม่ระบุ"}`,
@@ -232,9 +352,9 @@ export function buildHelpText(): OutboundMessage {
       "• เลิกเฝ้า — หยุด",
       "• สรุปตอนนี้ — ขอสรุปเดี๋ยวนี้",
       "",
-      "รอบการส่ง:",
+      "รอบการส่ง (พิมพ์ 'ตั้งรอบ' เพื่อกดเลือก):",
       "• ทุก 30 นาที / ทุก 4 ชม. (15 นาที – 24 ชม.)",
-      "• รายงานเวลา 09:00, 18:00",
+      "• เวลา 09:00, 18:00 — ส่งตามนาฬิกา",
       "",
       "คำสำคัญ:",
       "• คำสำคัญ ราคา, ยกเลิก, ด่วน — เจอแล้วเด้งทันที",

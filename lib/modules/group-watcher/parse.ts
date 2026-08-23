@@ -27,6 +27,8 @@ export type WatchIntent =
   | { action: "status" }
   /** สมาชิกขอไม่ให้สรุปข้อความตัวเอง / ขอกลับเข้าสรุป */
   | { action: "optout"; on: boolean }
+  /** ขอดู/ขอเปลี่ยน "รอบรายงาน" — เปิดการ์ดที่กดเลือกความถี่ได้ */
+  | { action: "schedule_menu" }
   /** วิธีใช้ */
   | { action: "help" }
   | null;
@@ -37,13 +39,20 @@ const CMD_STOP = /^(?:เลิกเฝ้า|หยุดเฝ้า|ปิ�
 const CMD_NOW = /^(?:สรุปตอนนี้|สรุปเลย|สรุปกลุ่ม|สรุปให้หน่อย|summarize)$/i;
 const CMD_STATUS = /^(?:เฝ้าอะไรอยู่|สถานะเฝ้า|ใครดูอยู่|watch\s*status)$/i;
 const CMD_HELP = /^(?:วิธีเฝ้ากลุ่ม|ช่วยเฝ้ากลุ่ม|help\s*watch)$/i;
+/**
+ * "ตั้งรอบ" · "ความถี่" · "รอบรายงาน" — เปิดเมนูเลือกความถี่
+ * จงใจไม่รับคำว่า "ตั้งเวลา" เปล่า ๆ เพราะกว้างเกินไป (คนพิมพ์เพื่อจะตั้งเตือนก็ได้)
+ * ต้องมีคำว่า รอบ/ความถี่/รายงาน กำกับเสมอ
+ */
+const CMD_SCHEDULE_MENU =
+  /^(?:ตั้ง|เปลี่ยน|ดู|แก้)?\s*(?:รอบ(?:รายงาน|สรุป|ส่ง)?|ความถี่|เวลารายงาน|เวลาสรุป|schedule)$/i;
 const CMD_OPTOUT = /^(?:ไม่สรุปข้อความ(?:ของ)?(?:ผม|ฉัน|หนู|เรา)|ขอไม่ถูกสรุป|optout)$/i;
 const CMD_OPTIN = /^(?:สรุปข้อความ(?:ของ)?(?:ผม|ฉัน|หนู|เรา)ได้|ขอกลับเข้าสรุป|optin)$/i;
 
 /** "รายงานทุก 30 นาที" · "สรุปทุก 2 ชม." · "ทุก 4 ชั่วโมง" */
 const CMD_INTERVAL = /^(?:รายงาน|สรุป|เฝ้า)?\s*ทุก\s*(\d+)\s*(นาที|นาท|ชม\.?|ชั่วโมง|hour|hr|min)/i;
 /** "รายงานเวลา 09:00, 18:00" */
-const CMD_TIMES = /^(?:รายงาน|สรุป)\s*(?:เวลา|ตอน)\s*(.+)$/i;
+const CMD_TIMES = /^(?:(?:รายงาน|สรุป|ส่ง)\s*)?(?:เวลา|ตอน)\s+(.+)$/i;
 /** "คำสำคัญ ด่วน, ยกเลิก" · "คำเตือน โกรธ, ไม่พอใจ" */
 const CMD_KEYWORDS = /^(?:คำสำคัญ|keyword[s]?)\s+(.+)$/i;
 const CMD_URGENT = /^(?:คำเตือน|คำด่วน|urgent)\s+(.+)$/i;
@@ -92,6 +101,8 @@ export function parseWatchIntent(text: string): WatchIntent {
   if (line.includes("\n")) return null;
 
   if (CMD_HELP.test(line)) return { action: "help" };
+  // ต้องอยู่ก่อน CMD_TIMES — ไม่งั้น "เวลารายงาน" จะถูกอ่านเป็น "รายการเวลา" ที่ว่างเปล่า
+  if (CMD_SCHEDULE_MENU.test(line)) return { action: "schedule_menu" };
   if (CMD_START.test(line)) return { action: "watch_start" };
   if (CMD_STOP.test(line)) return { action: "watch_stop" };
   if (CMD_NOW.test(line)) return { action: "summarize_now" };
