@@ -1,4 +1,5 @@
 import { getServiceClient } from "../../db";
+
 import type { ConversationLine } from "./summarize";
 
 /**
@@ -182,11 +183,22 @@ export async function getPending(targetId: string, limit = 500): Promise<Pending
   // สองอย่างนี้ต้องแยกออกจากกันได้โดยไม่ต้องเดา จึงนับซ้ำแบบไม่กรอง summarized ตอนได้ 0
   let probe: string | undefined;
   if (rows.length === 0) {
-    const { count } = await supabase
-      .from("upl_group_messages")
-      .select("id", { count: "exact", head: true })
-      .eq("target_id", targetId);
-    probe = `อ่านได้ 0 แถว (ทั้งกลุ่มมี ${count ?? "?"} แถว)`;
+    const n = async (b: any) => {
+      const { count, error: e } = await b;
+      return e ? `err:${e.code ?? ""}${e.message?.slice(0, 40) ?? ""}` : String(count ?? "?");
+    };
+    const t = (): any =>
+      (supabase as any)
+        .from("upl_group_messages")
+        .select("id", { count: "exact", head: true })
+        .eq("target_id", targetId);
+    probe = [
+      `กลุ่มนี้=${await n(t())}`,
+      `+summarized=false → ${await n(t().eq("summarized", false))}`,
+      `+is(false) → ${await n(t().is("summarized", false))}`,
+      `+order → ${await n(t().eq("summarized", false).order("sent_at", { ascending: true }))}`,
+      `+limit500 → ${await n(t().eq("summarized", false).limit(500))}`,
+    ].join(" | ");
   }
 
   return {
